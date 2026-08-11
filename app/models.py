@@ -20,6 +20,14 @@ class JenkinsBuildInfo(BaseModel):
     console_log: Optional[str] = None
 
 
+class FailureClassification(BaseModel):
+    category: str
+    action: str
+    reason: str
+    confidence: float
+    matched_pattern: Optional[str] = None
+
+
 class Incident(BaseModel):
     incident_id: str
     source: str
@@ -28,3 +36,4 @@ class Incident(BaseModel):
     status: str
     build_url: Optional[str] = None
     console_log: Optional[str] = None
+    classification: Optional[FailureClassification] = None
