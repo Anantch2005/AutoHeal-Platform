@@ -4,6 +4,20 @@ from app.classifier.classifier import FailureClassifier
 classifier = FailureClassifier()
 
 
+def test_flaky_test():
+
+    log = """
+    FAILED test_calculator.py::test_autoheal_flaky
+
+    AssertionError: AUTOHEAL_FLAKY_TEST
+    """
+
+    result = classifier.classify(log)
+
+    assert result["category"] == "FLAKY_TEST"
+    assert result["action"] == "RETRY"
+
+
 def test_code_failure():
 
     log = """

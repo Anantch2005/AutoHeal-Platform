@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 import re
 
-
 @dataclass
 class FailureRule:
     category: str
@@ -11,6 +10,17 @@ class FailureRule:
 
 
 FAILURE_RULES = [
+
+    FailureRule(
+        category="FLAKY_TEST",
+        action="RETRY",
+        reason="The failure matches a known flaky test scenario.",
+        patterns=[
+            r"AUTOHEAL_FLAKY_TEST",
+            r"FLAKY_TEST",
+        ],
+    ),
+
     FailureRule(
         category="CODE_FAILURE",
         action="DO_NOT_HEAL",

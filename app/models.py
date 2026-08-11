@@ -27,6 +27,12 @@ class FailureClassification(BaseModel):
     confidence: float
     matched_pattern: Optional[str] = None
 
+class RemediationResult(BaseModel):
+    action: str
+    success: bool
+    message: str
+    new_build_number: Optional[int] = None
+    verification_result: Optional[str] = None
 
 class Incident(BaseModel):
     incident_id: str
@@ -37,3 +43,4 @@ class Incident(BaseModel):
     build_url: Optional[str] = None
     console_log: Optional[str] = None
     classification: Optional[FailureClassification] = None
+    remediation: Optional[RemediationResult] = None
