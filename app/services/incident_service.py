@@ -1,21 +1,30 @@
 import uuid
 
-from app.collectors.jenkins import JenkinsCollector
 from app.classifier.classifier import FailureClassifier
+from app.collectors.jenkins import JenkinsCollector
 from app.models import (
     Incident,
     FailureClassification,
     RemediationResult,
 )
 from app.remediation.jenkins import JenkinsRemediator
+from app.safety.circuit_breaker import CircuitBreaker
 
 
 class IncidentService:
 
     def __init__(self):
+
         self.jenkins = JenkinsCollector()
+
         self.classifier = FailureClassifier()
+
         self.remediator = JenkinsRemediator()
+
+        self.circuit_breaker = CircuitBreaker(
+            max_attempts=3,
+            window_minutes=30,
+        )
 
     async def process_failure(
         self,
@@ -23,18 +32,18 @@ class IncidentService:
         build_number: int,
     ) -> Incident:
 
-        # -----------------------------------------
-        # 1. Collect evidence
-        # -----------------------------------------
+        # =========================================
+        # 1. COLLECT EVIDENCE
+        # =========================================
 
         build = await self.jenkins.get_build_info(
             job_name,
             build_number,
         )
 
-        # -----------------------------------------
-        # 2. Classify
-        # -----------------------------------------
+        # =========================================
+        # 2. CLASSIFY FAILURE
+        # =========================================
 
         classification_data = self.classifier.classify(
             build.console_log or ""
@@ -44,9 +53,9 @@ class IncidentService:
             **classification_data
         )
 
-        # -----------------------------------------
-        # 3. Create incident
-        # -----------------------------------------
+        # =========================================
+        # 3. CREATE INCIDENT
+        # =========================================
 
         incident = Incident(
             incident_id=f"AH-{uuid.uuid4().hex[:8].upper()}",
@@ -59,14 +68,15 @@ class IncidentService:
             classification=classification,
         )
 
-        print("\n" + "=" * 60)
+        print()
+        print("=" * 60)
         print("AUTOHEAL INCIDENT")
         print("=" * 60)
 
         print(f"Incident ID : {incident.incident_id}")
-        print(f"Job         : {incident.job_name}")
-        print(f"Build       : #{incident.build_number}")
-        print(f"Status      : {incident.status}")
+        print(f"Job         : {job_name}")
+        print(f"Build       : #{build_number}")
+        print(f"Status      : {build.result}")
 
         print("-" * 60)
         print("CLASSIFICATION")
@@ -77,9 +87,9 @@ class IncidentService:
         print(f"Confidence  : {classification.confidence}")
         print(f"Reason      : {classification.reason}")
 
-        # -----------------------------------------
-        # 4. Safety decision
-        # -----------------------------------------
+        # =========================================
+        # 4. CODE FAILURE → NEVER AUTO-HEAL
+        # =========================================
 
         if classification.action == "DO_NOT_HEAL":
 
@@ -87,33 +97,74 @@ class IncidentService:
                 action="DO_NOT_HEAL",
                 success=False,
                 message=(
-                    "Failure classified as a code failure. "
-                    "Automatic remediation was intentionally blocked."
+                    "Automatic remediation blocked because "
+                    "this appears to be a code failure."
                 ),
             )
 
             print("-" * 60)
             print("REMEDIATION")
             print("-" * 60)
-            print("Action      : BLOCKED")
+
+            print("Decision    : BLOCK")
             print("Reason      : Code failure")
-            print("=" * 60)
 
             return incident
 
-        # -----------------------------------------
-        # 5. Retry
-        # -----------------------------------------
+        # =========================================
+        # 5. ONLY RETRY SAFE CATEGORIES
+        # =========================================
 
         if classification.action == "RETRY":
 
+            allowed = self.circuit_breaker.allow(
+                job_name,
+                classification.category,
+            )
+
+            attempt = self.circuit_breaker.get_attempt_count(
+                job_name,
+                classification.category,
+            )
+
             print("-" * 60)
-            print("REMEDIATION")
+            print("SAFETY CHECK")
             print("-" * 60)
-            print("Action      : RETRY")
-            print("Status      : Starting new Jenkins build...")
+
+            print(f"Attempt     : {attempt}/3")
+            print(f"Allowed     : {allowed}")
+
+            # =====================================
+            # CIRCUIT BREAKER
+            # =====================================
+
+            if not allowed:
+
+                incident.remediation = RemediationResult(
+                    action="ESCALATE",
+                    success=False,
+                    message=(
+                        "Circuit breaker opened after "
+                        "repeated remediation attempts."
+                    ),
+                )
+
+                print("Decision    : ESCALATE")
+
+                return incident
+
+            # =====================================
+            # 6. TRIGGER JENKINS RETRY
+            # =====================================
 
             try:
+
+                print("-" * 60)
+                print("REMEDIATION")
+                print("-" * 60)
+
+                print("Action      : RETRY")
+                print("Status      : Triggering Jenkins...")
 
                 new_build = await self.remediator.trigger_build(
                     job_name
@@ -123,27 +174,48 @@ class IncidentService:
                     f"New Build   : #{new_build}"
                 )
 
-                # ---------------------------------
-                # 6. Verification
-                # ---------------------------------
+                # =================================
+                # 7. VERIFY
+                # =================================
+
+                print("Status      : Waiting for result...")
 
                 result = await self.remediator.get_build_result(
                     job_name,
                     new_build,
                 )
 
+                print(
+                    f"Verification: {result}"
+                )
+
+                # =================================
+                # 8. HEALED
+                # =================================
+
                 if result == "SUCCESS":
+
+                    self.circuit_breaker.reset(
+                        job_name,
+                        classification.category,
+                    )
 
                     incident.remediation = RemediationResult(
                         action="RETRY",
                         success=True,
-                        message="Retry succeeded. Pipeline healed.",
+                        message=(
+                            "Retry succeeded. "
+                            "Pipeline automatically healed."
+                        ),
                         new_build_number=new_build,
                         verification_result=result,
                     )
 
-                    print("Verification: SUCCESS")
                     print("Result      : HEALED")
+
+                # =================================
+                # 9. STILL BROKEN
+                # =================================
 
                 else:
 
@@ -151,16 +223,13 @@ class IncidentService:
                         action="RETRY",
                         success=False,
                         message=(
-                            "Retry completed but the pipeline "
-                            "still failed."
+                            "Retry completed but the "
+                            "pipeline is still failing."
                         ),
                         new_build_number=new_build,
                         verification_result=result,
                     )
 
-                    print(
-                        f"Verification: {result}"
-                    )
                     print("Result      : ESCALATE")
 
             except Exception as exc:
@@ -168,11 +237,11 @@ class IncidentService:
                 incident.remediation = RemediationResult(
                     action="RETRY",
                     success=False,
-                    message=f"Remediation failed: {exc}",
+                    message=f"Remediation error: {exc}",
                 )
 
                 print(
-                    f"Remediation error: {exc}"
+                    f"Result      : ERROR - {exc}"
                 )
 
         return incident

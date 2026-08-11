@@ -18,6 +18,20 @@ def test_flaky_test():
     assert result["action"] == "RETRY"
 
 
+def test_workspace_failure():
+
+    log = """
+    error: unable to create file
+    __pycache__/calculator.cpython-310.pyc: Permission denied
+
+    ERROR: Maximum checkout retry attempts reached
+    """
+
+    result = classifier.classify(log)
+
+    assert result["category"] == "WORKSPACE_FAILURE"
+    assert result["action"] == "RETRY"
+
 def test_code_failure():
 
     log = """

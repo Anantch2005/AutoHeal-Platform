@@ -6,6 +6,7 @@ from app.config import settings
 
 
 class JenkinsRemediator:
+
     def __init__(self):
         self.base_url = settings.jenkins_url.rstrip("/")
         self.auth = (
@@ -15,7 +16,8 @@ class JenkinsRemediator:
 
     async def trigger_build(self, job_name: str) -> int:
         """
-        Trigger a new Jenkins build and return the new build number.
+        Trigger a Jenkins build and wait until Jenkins
+        assigns a build number.
         """
 
         url = f"{self.base_url}/job/{job_name}/build"
@@ -33,7 +35,7 @@ class JenkinsRemediator:
 
             if not queue_url:
                 raise RuntimeError(
-                    "Jenkins did not return a queue location."
+                    "Jenkins did not return a queue URL."
                 )
 
         return await self._wait_for_build(queue_url)
@@ -64,7 +66,7 @@ class JenkinsRemediator:
 
                 if data.get("cancelled"):
                     raise RuntimeError(
-                        "Jenkins build queue item was cancelled."
+                        "Jenkins queue item was cancelled."
                     )
 
                 executable = data.get("executable")
@@ -76,7 +78,7 @@ class JenkinsRemediator:
                 elapsed += 2
 
         raise TimeoutError(
-            "Timed out waiting for Jenkins build to start."
+            "Timed out waiting for Jenkins build."
         )
 
     async def get_build_result(
@@ -85,6 +87,10 @@ class JenkinsRemediator:
         build_number: int,
         timeout: int = 300,
     ) -> str:
+        """
+        Wait for a Jenkins build to finish and return
+        its final result.
+        """
 
         url = (
             f"{self.base_url}/job/"

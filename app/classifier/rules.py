@@ -22,6 +22,19 @@ FAILURE_RULES = [
     ),
 
     FailureRule(
+       category="WORKSPACE_FAILURE",
+       action="RETRY",
+       reason="Jenkins workspace or filesystem permission failure was detected.",
+       patterns=[
+            r"Permission denied",
+            r"unable to create file",
+            r"Could not checkout",
+            r"Maximum checkout retry attempts reached",
+        ],
+    ),
+
+
+    FailureRule(
         category="CODE_FAILURE",
         action="DO_NOT_HEAL",
         reason="A test assertion or application code failure was detected.",
