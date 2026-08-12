@@ -52,11 +52,15 @@ FAILURE_RULES = [
         action="RETRY_WITH_CLEAN_INSTALL",
         reason="A dependency installation or package resolution failure was detected.",
         patterns=[
-            r"Could not find a version that satisfies the requirement",
+            r"Could not find a version that satisfies",
             r"No matching distribution found",
             r"ResolutionImpossible",
             r"dependency conflict",
+            r"Dependency conflict",
             r"lockfile.*mismatch",
+            r"package.*conflict",
+            r"version.*conflict",
+            r"failed to resolve dependencies",
         ],
     ),
 

@@ -9,8 +9,12 @@ class CircuitBreaker:
         max_attempts: int = 3,
         window_minutes: int = 30,
     ):
+
         self.max_attempts = max_attempts
-        self.window = timedelta(minutes=window_minutes)
+
+        self.window = timedelta(
+            minutes=window_minutes
+        )
 
         self.attempts = defaultdict(list)
 
@@ -22,23 +26,18 @@ class CircuitBreaker:
 
         key = f"{job_name}:{category}"
 
-        now = datetime.utcnow()
-
-        # Remove old attempts
-        self.attempts[key] = [
-            timestamp
-            for timestamp in self.attempts[key]
-            if now - timestamp < self.window
-        ]
+        self._cleanup(key)
 
         if len(self.attempts[key]) >= self.max_attempts:
             return False
 
-        self.attempts[key].append(now)
+        self.attempts[key].append(
+            datetime.utcnow()
+        )
 
         return True
 
-    def get_attempt_count(
+    def count(
         self,
         job_name: str,
         category: str,
@@ -46,13 +45,7 @@ class CircuitBreaker:
 
         key = f"{job_name}:{category}"
 
-        now = datetime.utcnow()
-
-        self.attempts[key] = [
-            timestamp
-            for timestamp in self.attempts[key]
-            if now - timestamp < self.window
-        ]
+        self._cleanup(key)
 
         return len(self.attempts[key])
 
@@ -61,6 +54,20 @@ class CircuitBreaker:
         job_name: str,
         category: str,
     ):
+
         key = f"{job_name}:{category}"
 
-        self.attempts.pop(key, None)
+        self.attempts.pop(
+            key,
+            None,
+        )
+
+    def _cleanup(self, key: str):
+
+        now = datetime.utcnow()
+
+        self.attempts[key] = [
+            timestamp
+            for timestamp in self.attempts[key]
+            if now - timestamp < self.window
+        ]

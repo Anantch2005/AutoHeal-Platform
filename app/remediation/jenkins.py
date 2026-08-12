@@ -14,18 +14,37 @@ class JenkinsRemediator:
             settings.jenkins_api_token,
         )
 
-    async def trigger_build(self, job_name: str) -> int:
+    async def trigger_build(
+        self,
+        job_name: str,
+        parameters: dict | None = None,
+    ) -> int:
         """
-        Trigger a Jenkins build and wait until Jenkins
-        assigns a build number.
+        Trigger a Jenkins build.
+
+        If parameters are supplied, use Jenkins
+        buildWithParameters endpoint.
+
+        Returns the newly assigned build number.
         """
 
-        url = f"{self.base_url}/job/{job_name}/build"
+        if parameters:
+            url = (
+                f"{self.base_url}/job/"
+                f"{job_name}/buildWithParameters"
+            )
+        else:
+            url = (
+                f"{self.base_url}/job/"
+                f"{job_name}/build"
+            )
 
         async with httpx.AsyncClient() as client:
+
             response = await client.post(
                 url,
                 auth=self.auth,
+                data=parameters,
                 timeout=30,
             )
 
@@ -45,6 +64,9 @@ class JenkinsRemediator:
         queue_url: str,
         timeout: int = 120,
     ) -> int:
+        """
+        Wait for Jenkins to assign an executable build.
+        """
 
         queue_api = f"{queue_url.rstrip('/')}/api/json"
 
@@ -88,8 +110,8 @@ class JenkinsRemediator:
         timeout: int = 300,
     ) -> str:
         """
-        Wait for a Jenkins build to finish and return
-        its final result.
+        Wait for Jenkins build completion and return
+        the final Jenkins result.
         """
 
         url = (
@@ -122,3 +144,29 @@ class JenkinsRemediator:
         raise TimeoutError(
             f"Build #{build_number} did not finish in time."
         )
+
+    async def get_build_info(
+        self,
+        job_name: str,
+        build_number: int,
+    ) -> dict:
+        """
+        Retrieve complete Jenkins build metadata.
+        """
+
+        url = (
+            f"{self.base_url}/job/"
+            f"{job_name}/{build_number}/api/json"
+        )
+
+        async with httpx.AsyncClient() as client:
+
+            response = await client.get(
+                url,
+                auth=self.auth,
+                timeout=30,
+            )
+
+            response.raise_for_status()
+
+            return response.json()

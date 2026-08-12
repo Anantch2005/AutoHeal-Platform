@@ -1,5 +1,6 @@
-from pydantic import BaseModel
 from typing import Optional
+
+from pydantic import BaseModel
 
 
 class JenkinsWebhookEvent(BaseModel):
@@ -27,12 +28,14 @@ class FailureClassification(BaseModel):
     confidence: float
     matched_pattern: Optional[str] = None
 
+
 class RemediationResult(BaseModel):
     action: str
     success: bool
     message: str
     new_build_number: Optional[int] = None
     verification_result: Optional[str] = None
+
 
 class Incident(BaseModel):
     incident_id: str
