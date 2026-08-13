@@ -18,14 +18,13 @@ class JenkinsRemediator:
         self,
         job_name: str,
         parameters: dict | None = None,
-    ) -> int:
+    ) -> dict:
         """
         Trigger a Jenkins build.
 
-        If parameters are supplied, use Jenkins
-        buildWithParameters endpoint.
-
-        Returns the newly assigned build number.
+        If parameters are provided, use
+        /buildWithParameters so AutoHeal can pass
+        AUTOHEAL_RETRY=true.
         """
 
         if parameters:
@@ -50,25 +49,38 @@ class JenkinsRemediator:
 
             response.raise_for_status()
 
-            queue_url = response.headers.get("Location")
+            queue_url = response.headers.get(
+                "Location"
+            )
 
             if not queue_url:
                 raise RuntimeError(
                     "Jenkins did not return a queue URL."
                 )
 
-        return await self._wait_for_build(queue_url)
+        # Wait until Jenkins assigns the real
+        # build number.
+        build_number = await self.wait_for_queue(
+            queue_url
+        )
 
-    async def _wait_for_build(
+        return {
+            "success": True,
+            "message": "Jenkins build triggered.",
+            "build_number": build_number,
+            "queue_url": queue_url,
+        }
+
+    async def wait_for_queue(
         self,
         queue_url: str,
         timeout: int = 120,
     ) -> int:
-        """
-        Wait for Jenkins to assign an executable build.
-        """
 
-        queue_api = f"{queue_url.rstrip('/')}/api/json"
+        api_url = (
+            queue_url.rstrip("/")
+            + "/api/json"
+        )
 
         elapsed = 0
 
@@ -77,9 +89,9 @@ class JenkinsRemediator:
             while elapsed < timeout:
 
                 response = await client.get(
-                    queue_api,
+                    api_url,
                     auth=self.auth,
-                    timeout=15,
+                    timeout=20,
                 )
 
                 response.raise_for_status()
@@ -91,7 +103,9 @@ class JenkinsRemediator:
                         "Jenkins queue item was cancelled."
                     )
 
-                executable = data.get("executable")
+                executable = data.get(
+                    "executable"
+                )
 
                 if executable:
                     return executable["number"]
@@ -100,18 +114,19 @@ class JenkinsRemediator:
                 elapsed += 2
 
         raise TimeoutError(
-            "Timed out waiting for Jenkins build."
+            "Timed out waiting for Jenkins "
+            "queue item."
         )
 
     async def get_build_result(
         self,
         job_name: str,
         build_number: int,
-        timeout: int = 300,
+        timeout: int = 600,
     ) -> str:
         """
-        Wait for Jenkins build completion and return
-        the final Jenkins result.
+        Wait for the Jenkins build to finish and
+        return its final result.
         """
 
         url = (
@@ -128,45 +143,26 @@ class JenkinsRemediator:
                 response = await client.get(
                     url,
                     auth=self.auth,
-                    timeout=15,
+                    timeout=20,
                 )
 
                 response.raise_for_status()
 
                 data = response.json()
 
-                if not data.get("building", False):
-                    return data.get("result", "UNKNOWN")
+                if not data.get(
+                    "building",
+                    False,
+                ):
+                    return data.get(
+                        "result",
+                        "UNKNOWN",
+                    )
 
                 await asyncio.sleep(5)
                 elapsed += 5
 
         raise TimeoutError(
-            f"Build #{build_number} did not finish in time."
+            f"Build #{build_number} did not "
+            "finish within the timeout."
         )
-
-    async def get_build_info(
-        self,
-        job_name: str,
-        build_number: int,
-    ) -> dict:
-        """
-        Retrieve complete Jenkins build metadata.
-        """
-
-        url = (
-            f"{self.base_url}/job/"
-            f"{job_name}/{build_number}/api/json"
-        )
-
-        async with httpx.AsyncClient() as client:
-
-            response = await client.get(
-                url,
-                auth=self.auth,
-                timeout=30,
-            )
-
-            response.raise_for_status()
-
-            return response.json()

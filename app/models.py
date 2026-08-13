@@ -33,8 +33,12 @@ class RemediationResult(BaseModel):
     action: str
     success: bool
     message: str
-    new_build_number: Optional[int] = None
-    verification_result: Optional[str] = None
+
+    new_build_number: int | None = None
+
+    verification_result: str | None = None
+
+    queue_url: str | None = None
 
 
 class Incident(BaseModel):

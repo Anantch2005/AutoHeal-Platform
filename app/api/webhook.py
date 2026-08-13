@@ -35,6 +35,13 @@ async def jenkins_webhook(
         build_number=event.build_number,
     )
 
+    if incident is None:
+        return {
+            "message": "Duplicate incident ignored.",
+            "job": event.job_name,
+            "build": event.build_number,
+        }
+
     return {
         "message": "Failure received",
         "incident_id": incident.incident_id,
@@ -42,4 +49,9 @@ async def jenkins_webhook(
         "build": incident.build_number,
         "status": incident.status,
         "classification": incident.classification.model_dump(),
+        "remediation": (
+            incident.remediation.model_dump()
+            if incident.remediation
+            else None
+        ),
     }

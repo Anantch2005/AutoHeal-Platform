@@ -11,10 +11,11 @@ class FailureRule:
 
 FAILURE_RULES = [
 
+    # Most specific signatures FIRST.
     FailureRule(
         category="FLAKY_TEST",
         action="RETRY",
-        reason="The failure matches a known flaky test scenario.",
+        reason="The failure matches a known AutoHeal flaky-test scenario.",
         patterns=[
             r"AUTOHEAL_FLAKY_TEST",
             r"FLAKY_TEST",
@@ -22,28 +23,14 @@ FAILURE_RULES = [
     ),
 
     FailureRule(
-       category="WORKSPACE_FAILURE",
-       action="RETRY",
-       reason="Jenkins workspace or filesystem permission failure was detected.",
-       patterns=[
+        category="WORKSPACE_FAILURE",
+        action="RETRY",
+        reason="A Jenkins workspace or filesystem failure was detected.",
+        patterns=[
             r"Permission denied",
             r"unable to create file",
             r"Could not checkout",
             r"Maximum checkout retry attempts reached",
-        ],
-    ),
-
-
-    FailureRule(
-        category="CODE_FAILURE",
-        action="DO_NOT_HEAL",
-        reason="A test assertion or application code failure was detected.",
-        patterns=[
-            r"AssertionError",
-            r"assert .*==",
-            r"FAILED .*test_",
-            r"test_.*failed",
-            r"Traceback \(most recent call last\)",
         ],
     ),
 
@@ -56,8 +43,6 @@ FAILURE_RULES = [
             r"No matching distribution found",
             r"ResolutionImpossible",
             r"dependency conflict",
-            r"Dependency conflict",
-            r"lockfile.*mismatch",
             r"package.*conflict",
             r"version.*conflict",
             r"failed to resolve dependencies",
@@ -101,6 +86,20 @@ FAILURE_RULES = [
             r"push.*failed",
             r"manifest unknown",
             r"registry.*timeout",
+        ],
+    ),
+
+    # Generic code signatures LAST.
+    FailureRule(
+        category="CODE_FAILURE",
+        action="DO_NOT_HEAL",
+        reason="A test assertion or application code failure was detected.",
+        patterns=[
+            r"AssertionError",
+            r"assert .*==",
+            r"FAILED .*test_",
+            r"test_.*failed",
+            r"Traceback \(most recent call last\)",
         ],
     ),
 ]

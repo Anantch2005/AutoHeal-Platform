@@ -7,6 +7,9 @@ from app.models import (
     FailureClassification,
     RemediationResult,
 )
+from app.remediation.executor import RemediationExecutor
+from app.safety.circuit_breaker import CircuitBreaker
+from app.state.processed_incidents import ProcessedIncidents
 
 
 class IncidentService:
@@ -15,17 +18,52 @@ class IncidentService:
         self.jenkins = JenkinsCollector()
         self.classifier = FailureClassifier()
 
+        # Phase 2 remediation engine
+        self.remediation = RemediationExecutor()
+
+        # Safety protection
+        self.circuit_breaker = CircuitBreaker(
+            max_attempts=3,
+            window_minutes=30,
+        )
+
+        # Prevent duplicate processing of the same
+        # Jenkins job/build during the current process.
+        self.processed_incidents = ProcessedIncidents()
+
     async def process_failure(
         self,
         job_name: str,
         build_number: int,
-    ) -> Incident:
+    ) -> Incident | None:
+
+        # =========================================
+        # 0. DUPLICATE INCIDENT PROTECTION
+        # =========================================
+
+        if self.processed_incidents.is_processed(
+            job_name,
+            build_number,
+        ):
+            print(
+                f"Duplicate incident ignored: "
+                f"{job_name} #{build_number}"
+            )
+
+            return None
 
         # =========================================
         # 1. COLLECT EVIDENCE
         # =========================================
 
         build = await self.jenkins.get_build_info(
+            job_name,
+            build_number,
+        )
+
+        # Only mark processed after Jenkins evidence
+        # was successfully collected.
+        self.processed_incidents.mark_processed(
             job_name,
             build_number,
         )
@@ -62,34 +100,7 @@ class IncidentService:
         )
 
         # =========================================
-        # 4. PHASE 1 DECISION
-        # =========================================
-
-        if classification.action == "RETRY":
-            remediation_message = (
-                "Failure is classified as recoverable. "
-                "Automatic remediation is not enabled yet."
-            )
-
-        elif classification.action == "DO_NOT_HEAL":
-            remediation_message = (
-                "Failure is unsafe to automatically remediate."
-            )
-
-        else:
-            remediation_message = (
-                "Failure could not be safely classified. "
-                "Escalation is required."
-            )
-
-        incident.remediation = RemediationResult(
-            action=classification.action,
-            success=False,
-            message=remediation_message,
-        )
-
-        # =========================================
-        # 5. LOG INCIDENT
+        # LOG INCIDENT
         # =========================================
 
         print()
@@ -137,17 +148,202 @@ class IncidentService:
             f"Reason      : {classification.reason}"
         )
 
+        # =========================================
+        # 4. BLOCK UNSAFE FAILURES
+        # =========================================
+
+        if classification.action in (
+            "DO_NOT_HEAL",
+            "ESCALATE",
+        ):
+
+            remediation_message = (
+                classification.reason
+            )
+
+            incident.remediation = RemediationResult(
+                action=classification.action,
+                success=False,
+                message=remediation_message,
+            )
+
+            print("-" * 60)
+            print("SAFETY DECISION")
+            print("-" * 60)
+
+            print(
+                f"Decision    : {classification.action}"
+            )
+
+            print(
+                f"Message     : {remediation_message}"
+            )
+
+            print("=" * 60)
+
+            return incident
+
+        # =========================================
+        # 5. CIRCUIT BREAKER
+        # =========================================
+
+        allowed = self.circuit_breaker.allow(
+            job_name,
+            classification.category,
+        )
+
+        attempt = self.circuit_breaker.count(
+            job_name,
+            classification.category,
+        )
+
         print("-" * 60)
-        print("PHASE 1 DECISION")
+        print("SAFETY CHECK")
         print("-" * 60)
 
         print(
-            f"Decision    : {classification.action}"
+            f"Attempt     : {attempt}/3"
         )
 
         print(
-            f"Message     : {remediation_message}"
+            f"Allowed     : {allowed}"
         )
+
+        if not allowed:
+
+            remediation_message = (
+                "Circuit breaker opened after "
+                "repeated remediation attempts."
+            )
+
+            incident.remediation = RemediationResult(
+                action="ESCALATE",
+                success=False,
+                message=remediation_message,
+            )
+
+            print(
+                "Decision    : ESCALATE"
+            )
+
+            print(
+                f"Message     : {remediation_message}"
+            )
+
+            print("=" * 60)
+
+            return incident
+
+        # =========================================
+        # 6. PHASE 2 REMEDIATION
+        # =========================================
+
+        print("-" * 60)
+        print("PHASE 2 REMEDIATION")
+        print("-" * 60)
+
+        print(
+            f"Category    : {classification.category}"
+        )
+
+        print(
+            f"Action      : {classification.action}"
+        )
+
+        try:
+
+            result = await self.remediation.execute(
+                job_name=job_name,
+                category=classification.category,
+                action=classification.action,
+            )
+
+        except Exception as exc:
+
+            result = {
+                "action": "ESCALATE",
+                "success": False,
+                "message": (
+                    f"Unhandled remediation error: {exc}"
+                ),
+            }
+
+        # =========================================
+        # 7. STORE RESULT
+        # =========================================
+
+        incident.remediation = RemediationResult(
+            action=result["action"],
+            success=result["success"],
+            message=result["message"],
+            new_build_number=result.get(
+                "new_build_number"
+            ),
+            verification_result=result.get(
+                "verification_result"
+            ),
+            queue_url=result.get(
+                "queue_url"
+            ),
+        )
+
+        # =========================================
+        # 8. LOG RESULT
+        # =========================================
+
+        print("-" * 60)
+        print("REMEDIATION RESULT")
+        print("-" * 60)
+
+        print(
+            f"Action      : {result['action']}"
+        )
+
+        print(
+            f"Success     : {result['success']}"
+        )
+
+        print(
+            f"Message     : {result['message']}"
+        )
+
+        if result.get("queue_url"):
+            print(
+                f"Queue       : {result['queue_url']}"
+            )
+
+        if result.get("new_build_number"):
+            print(
+                f"New Build   : "
+                f"#{result['new_build_number']}"
+            )
+
+        if result.get("verification_result"):
+            print(
+                f"Verified    : "
+                f"{result['verification_result']}"
+            )
+
+        # =========================================
+        # 9. RESET CIRCUIT AFTER SUCCESS
+        # =========================================
+
+        if result["success"]:
+
+            self.circuit_breaker.reset(
+                job_name,
+                classification.category,
+            )
+
+            print(
+                "Result      : HEALED"
+            )
+
+        else:
+
+            print(
+                "Result      : ESCALATE"
+            )
 
         print("=" * 60)
 
