@@ -5,12 +5,14 @@ class WorkspaceRemediator:
         job_name: str,
     ) -> dict:
         """
-        Safe workspace remediation.
+        Phase 2 workspace remediation.
 
-        Phase 2 does not manipulate the Jenkins host
-        filesystem directly.
+        The Jenkins pipeline starts with Clean Workspace,
+        so a new remediation build provides a fresh
+        workspace execution.
 
-        The next build receives a fresh execution attempt.
+        AutoHeal does not directly modify the Jenkins
+        host filesystem.
         """
 
         return {
@@ -18,8 +20,8 @@ class WorkspaceRemediator:
             "success": True,
             "message": (
                 "Workspace failure detected. "
-                "A fresh Jenkins build will be attempted. "
-                "Direct Jenkins host filesystem modification "
-                "is disabled."
+                "A fresh Jenkins execution will be started. "
+                "AutoHeal does not directly modify the "
+                "Jenkins host filesystem."
             ),
         }

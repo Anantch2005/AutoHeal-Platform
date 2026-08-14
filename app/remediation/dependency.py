@@ -5,9 +5,13 @@ class DependencyRemediator:
         job_name: str,
     ) -> dict:
         """
-        Safe dependency remediation.
+        Phase 2 dependency remediation.
 
-        We do not modify source code or lockfiles.
+        The Jenkins test stage creates a fresh Python
+        container and installs dependencies again.
+        Therefore a remediation retry provides a clean
+        dependency-install attempt without modifying
+        source code or lockfiles.
         """
 
         return {
@@ -15,7 +19,7 @@ class DependencyRemediator:
             "success": True,
             "message": (
                 "Dependency failure detected. "
-                "A fresh dependency installation will be "
-                "attempted by the Jenkins pipeline."
+                "A fresh Jenkins execution will perform "
+                "a clean dependency installation attempt."
             ),
         }

@@ -1,10 +1,14 @@
+from app.remediation.dependency import DependencyRemediator
 from app.remediation.jenkins import JenkinsRemediator
+from app.remediation.workspace import WorkspaceRemediator
 
 
 class RemediationExecutor:
 
     def __init__(self):
         self.jenkins = JenkinsRemediator()
+        self.workspace = WorkspaceRemediator()
+        self.dependency = DependencyRemediator()
 
     async def execute(
         self,
@@ -19,7 +23,6 @@ class RemediationExecutor:
         # =========================================
 
         if action == "DO_NOT_HEAL":
-
             return {
                 "action": "DO_NOT_HEAL",
                 "success": False,
@@ -34,183 +37,90 @@ class RemediationExecutor:
         # RETRY + VERIFY
         # =========================================
 
-        if (
-            category == "FLAKY_TEST"
-            and action == "RETRY"
-        ):
+        if category == "FLAKY_TEST" and action == "RETRY":
 
-            print(
-                "Triggering Jenkins remediation build..."
+            preparation = await self._prepare_flaky_test(
+                job_name
             )
 
-            parameters = {
-                "AUTOHEAL_RETRY": "true",
-            }
+            if not preparation["success"]:
+                return preparation
 
-            try:
-
-                trigger = await self.jenkins.trigger_build(
-                    job_name,
-                    parameters=parameters,
-                )
-
-            except Exception as exc:
-
-                return {
-                    "action": "ESCALATE",
-                    "success": False,
-                    "message": (
-                        "Failed to trigger Jenkins retry: "
-                        f"{exc}"
-                    ),
-                }
-
-            # =====================================
-            # CHECK TRIGGER RESPONSE
-            # =====================================
-
-            if not isinstance(trigger, dict):
-
-                return {
-                    "action": "ESCALATE",
-                    "success": False,
-                    "message": (
-                        "Unexpected response from "
-                        "Jenkins trigger."
-                    ),
-                }
-
-            if not trigger.get("success", False):
-
-                return {
-                    "action": "ESCALATE",
-                    "success": False,
-                    "message": trigger.get(
-                        "message",
-                        "Failed to trigger Jenkins retry.",
-                    ),
-                }
-
-            # =====================================
-            # NEW BUILD NUMBER
-            # =====================================
-
-            new_build = trigger.get(
-                "build_number"
+            return await self._retry_and_verify(
+                job_name=job_name,
+                reason="flaky test",
             )
-
-            queue_url = trigger.get(
-                "queue_url"
-            )
-
-            if new_build is None:
-
-                return {
-                    "action": "ESCALATE",
-                    "success": False,
-                    "message": (
-                        "Jenkins accepted the retry, "
-                        "but no build number was returned."
-                    ),
-                    "queue_url": queue_url,
-                }
-
-            print(
-                f"New Jenkins build: #{new_build}"
-            )
-
-            # =====================================
-            # WAIT FOR COMPLETION / VERIFY
-            # =====================================
-
-            try:
-
-                result = (
-                    await self.jenkins.get_build_result(
-                        job_name,
-                        new_build,
-                    )
-                )
-
-            except Exception as exc:
-
-                return {
-                    "action": "ESCALATE",
-                    "success": False,
-                    "message": (
-                        "Failed while verifying "
-                        f"Jenkins build #{new_build}: "
-                        f"{exc}"
-                    ),
-                    "new_build_number": new_build,
-                    "queue_url": queue_url,
-                }
-
-            # =====================================
-            # SUCCESS → HEALED
-            # =====================================
-
-            if result == "SUCCESS":
-
-                return {
-                    "action": "RETRY",
-                    "success": True,
-                    "message": (
-                        "Retry completed successfully. "
-                        "Pipeline automatically healed."
-                    ),
-                    "new_build_number": new_build,
-                    "verification_result": "SUCCESS",
-                    "queue_url": queue_url,
-                }
-
-            # =====================================
-            # FAILURE → ESCALATE
-            # =====================================
-
-            return {
-                "action": "ESCALATE",
-                "success": False,
-                "message": (
-                    "Retry completed but the pipeline "
-                    "still failed."
-                ),
-                "new_build_number": new_build,
-                "verification_result": (
-                    result or "UNKNOWN"
-                ),
-                "queue_url": queue_url,
-            }
 
         # =========================================
         # WORKSPACE FAILURE
+        # FRESH JENKINS EXECUTION
         # =========================================
 
         if category == "WORKSPACE_FAILURE":
 
-            return {
-                "action": "ESCALATE",
-                "success": False,
-                "message": (
-                    "Workspace remediation is not "
-                    "enabled yet."
-                ),
-            }
+            preparation = await self.workspace.remediate(
+                job_name
+            )
+
+            if not preparation["success"]:
+                return preparation
+
+            return await self._retry_and_verify(
+                job_name=job_name,
+                reason="workspace failure",
+            )
 
         # =========================================
         # DEPENDENCY FAILURE
+        # FRESH DEPENDENCY INSTALL
         # =========================================
 
         if category == "DEPENDENCY_FAILURE":
 
-            return {
-                "action": "ESCALATE",
-                "success": False,
-                "message": (
-                    "Dependency remediation is not "
-                    "enabled yet."
-                ),
-            }
+            preparation = await self.dependency.remediate(
+                job_name
+            )
+
+            if not preparation["success"]:
+                return preparation
+
+            return await self._retry_and_verify(
+                job_name=job_name,
+                reason="dependency failure",
+            )
+
+        # =========================================
+        # NETWORK FAILURE
+        # =========================================
+
+        if category == "NETWORK_FAILURE" and action == "RETRY":
+
+            return await self._retry_and_verify(
+                job_name=job_name,
+                reason="network failure",
+            )
+
+        # =========================================
+        # DOCKER FAILURE
+        # =========================================
+
+        if category == "DOCKER_FAILURE" and action == "RETRY":
+
+            return await self._retry_and_verify(
+                job_name=job_name,
+                reason="Docker failure",
+            )
+
+        # =========================================
+        # REGISTRY FAILURE
+        # =========================================
+
+        if category == "REGISTRY_FAILURE" and action == "RETRY":
+
+            return await self._retry_and_verify(
+                job_name=job_name,
+                reason="registry failure",
+            )
 
         # =========================================
         # EVERYTHING ELSE
@@ -223,4 +133,136 @@ class RemediationExecutor:
                 f"No safe remediation exists for "
                 f"{category}."
             ),
+        }
+
+    async def _prepare_flaky_test(
+        self,
+        job_name: str,
+    ) -> dict:
+
+        return {
+            "action": "RETRY",
+            "success": True,
+            "message": (
+                "Known flaky test detected. "
+                "A controlled Jenkins retry will be attempted."
+            ),
+        }
+
+    async def _retry_and_verify(
+        self,
+        job_name: str,
+        reason: str,
+    ) -> dict:
+
+        print(
+            "Triggering Jenkins remediation build..."
+        )
+
+        parameters = {
+            "AUTOHEAL_RETRY": "true",
+        }
+
+        try:
+
+            trigger = await self.jenkins.trigger_build(
+                job_name,
+                parameters=parameters,
+            )
+
+        except Exception as exc:
+
+            return {
+                "action": "ESCALATE",
+                "success": False,
+                "message": (
+                    f"Failed to trigger Jenkins retry: {exc}"
+                ),
+            }
+
+        if not isinstance(trigger, dict):
+
+            return {
+                "action": "ESCALATE",
+                "success": False,
+                "message": (
+                    "Unexpected response from Jenkins trigger."
+                ),
+            }
+
+        if not trigger.get("success", False):
+
+            return {
+                "action": "ESCALATE",
+                "success": False,
+                "message": trigger.get(
+                    "message",
+                    "Failed to trigger Jenkins retry.",
+                ),
+                "queue_url": trigger.get("queue_url"),
+            }
+
+        new_build = trigger.get("build_number")
+        queue_url = trigger.get("queue_url")
+
+        if new_build is None:
+
+            return {
+                "action": "ESCALATE",
+                "success": False,
+                "message": (
+                    "Jenkins accepted the retry, "
+                    "but no build number was returned."
+                ),
+                "queue_url": queue_url,
+            }
+
+        print(
+            f"New Jenkins build: #{new_build}"
+        )
+
+        try:
+
+            result = await self.jenkins.get_build_result(
+                job_name,
+                new_build,
+            )
+
+        except Exception as exc:
+
+            return {
+                "action": "ESCALATE",
+                "success": False,
+                "message": (
+                    f"Failed while verifying Jenkins "
+                    f"build #{new_build}: {exc}"
+                ),
+                "new_build_number": new_build,
+                "queue_url": queue_url,
+            }
+
+        if result == "SUCCESS":
+
+            return {
+                "action": "RETRY",
+                "success": True,
+                "message": (
+                    f"Retry completed successfully after "
+                    f"{reason}. Pipeline automatically healed."
+                ),
+                "new_build_number": new_build,
+                "verification_result": "SUCCESS",
+                "queue_url": queue_url,
+            }
+
+        return {
+            "action": "ESCALATE",
+            "success": False,
+            "message": (
+                f"Retry completed but the pipeline still "
+                f"failed after {reason}."
+            ),
+            "new_build_number": new_build,
+            "verification_result": result or "UNKNOWN",
+            "queue_url": queue_url,
         }

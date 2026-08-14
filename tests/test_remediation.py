@@ -83,6 +83,56 @@ async def test_failed_retry_escalates():
 
 
 @pytest.mark.asyncio
+async def test_workspace_failure_is_retried():
+
+    executor = RemediationExecutor()
+
+    fake = FakeJenkins(result="SUCCESS")
+
+    executor.jenkins = fake
+
+    result = await executor.execute(
+        job_name="prac",
+        category="WORKSPACE_FAILURE",
+        action="RETRY",
+    )
+
+    assert fake.triggered is True
+    assert fake.parameters == {
+        "AUTOHEAL_RETRY": "true",
+    }
+
+    assert result["success"] is True
+    assert result["new_build_number"] == 200
+    assert result["verification_result"] == "SUCCESS"
+
+
+@pytest.mark.asyncio
+async def test_dependency_failure_is_retried():
+
+    executor = RemediationExecutor()
+
+    fake = FakeJenkins(result="SUCCESS")
+
+    executor.jenkins = fake
+
+    result = await executor.execute(
+        job_name="prac",
+        category="DEPENDENCY_FAILURE",
+        action="RETRY_WITH_CLEAN_INSTALL",
+    )
+
+    assert fake.triggered is True
+    assert fake.parameters == {
+        "AUTOHEAL_RETRY": "true",
+    }
+
+    assert result["success"] is True
+    assert result["new_build_number"] == 200
+    assert result["verification_result"] == "SUCCESS"
+
+
+@pytest.mark.asyncio
 async def test_code_failure_is_never_retried():
 
     executor = RemediationExecutor()
