@@ -2,6 +2,7 @@ import uuid
 
 from app.classifier.classifier import FailureClassifier
 from app.collectors.jenkins import JenkinsCollector
+from app.database.repository import IncidentRepository
 from app.models import (
     Incident,
     FailureClassification,
@@ -9,7 +10,6 @@ from app.models import (
 )
 from app.remediation.executor import RemediationExecutor
 from app.safety.circuit_breaker import CircuitBreaker
-from app.state.processed_incidents import ProcessedIncidents
 
 
 class IncidentService:
@@ -17,19 +17,15 @@ class IncidentService:
     def __init__(self):
         self.jenkins = JenkinsCollector()
         self.classifier = FailureClassifier()
-
-        # Phase 2 remediation engine
         self.remediation = RemediationExecutor()
 
-        # Safety protection
         self.circuit_breaker = CircuitBreaker(
             max_attempts=3,
             window_minutes=30,
         )
 
-        # Prevent duplicate processing of the same
-        # Jenkins job/build during the current process.
-        self.processed_incidents = ProcessedIncidents()
+        # PostgreSQL persistence
+        self.repository = IncidentRepository()
 
     async def process_failure(
         self,
@@ -38,10 +34,10 @@ class IncidentService:
     ) -> Incident | None:
 
         # =========================================
-        # 0. DUPLICATE INCIDENT PROTECTION
+        # 0. PERSISTENT DUPLICATE PROTECTION
         # =========================================
 
-        if self.processed_incidents.is_processed(
+        if self.repository.exists(
             job_name,
             build_number,
         ):
@@ -49,7 +45,6 @@ class IncidentService:
                 f"Duplicate incident ignored: "
                 f"{job_name} #{build_number}"
             )
-
             return None
 
         # =========================================
@@ -61,17 +56,10 @@ class IncidentService:
             build_number,
         )
 
-        # Only mark processed after Jenkins evidence
-        # was successfully collected.
-        self.processed_incidents.mark_processed(
-            job_name,
-            build_number,
-        )
-
         log = build.console_log or ""
 
         # =========================================
-        # 2. CLASSIFY FAILURE
+        # 2. CLASSIFY
         # =========================================
 
         classification_data = self.classifier.classify(
@@ -83,7 +71,7 @@ class IncidentService:
         )
 
         # =========================================
-        # 3. CREATE INCIDENT
+        # 3. CREATE INCIDENT OBJECT
         # =========================================
 
         incident = Incident(
@@ -100,7 +88,39 @@ class IncidentService:
         )
 
         # =========================================
-        # LOG INCIDENT
+        # 4. PERSIST INCIDENT
+        # =========================================
+
+        database_incident_id = (
+            self.repository.create_incident(
+                incident_id=incident.incident_id,
+                source=incident.source,
+                job_name=incident.job_name,
+                build_number=incident.build_number,
+                status=incident.status,
+                build_url=incident.build_url,
+                failure_category=classification.category,
+                failure_action=classification.action,
+                reason=classification.reason,
+                matched_pattern=(
+                    classification.matched_pattern
+                ),
+                confidence=classification.confidence,
+                console_log=incident.console_log,
+            )
+        )
+
+        self.repository.add_audit_event(
+            incident_id=database_incident_id,
+            event_type="INCIDENT_CREATED",
+            message=(
+                f"Incident created for Jenkins "
+                f"{job_name} #{build_number}"
+            ),
+        )
+
+        # =========================================
+        # LOG
         # =========================================
 
         print()
@@ -113,19 +133,15 @@ class IncidentService:
         )
 
         print(
-            f"Job         : {incident.job_name}"
+            f"Job         : {job_name}"
         )
 
         print(
-            f"Build       : #{incident.build_number}"
+            f"Build       : #{build_number}"
         )
 
         print(
             f"Status      : {incident.status}"
-        )
-
-        print(
-            f"Build URL   : {incident.build_url}"
         )
 
         print("-" * 60)
@@ -149,7 +165,7 @@ class IncidentService:
         )
 
         # =========================================
-        # 4. BLOCK UNSAFE FAILURES
+        # 5. UNSAFE FAILURE
         # =========================================
 
         if classification.action in (
@@ -167,6 +183,24 @@ class IncidentService:
                 message=remediation_message,
             )
 
+            self.repository.add_audit_event(
+                incident_id=database_incident_id,
+                event_type="REMEDIATION_BLOCKED",
+                message=remediation_message,
+            )
+
+            self.repository.create_attempt(
+                incident_id=database_incident_id,
+                attempt_number=1,
+                action=classification.action,
+                success=False,
+                message=remediation_message,
+                original_build_number=build_number,
+                retry_build_number=None,
+                queue_url=None,
+                verification_result=None,
+            )
+
             print("-" * 60)
             print("SAFETY DECISION")
             print("-" * 60)
@@ -175,16 +209,12 @@ class IncidentService:
                 f"Decision    : {classification.action}"
             )
 
-            print(
-                f"Message     : {remediation_message}"
-            )
-
             print("=" * 60)
 
             return incident
 
         # =========================================
-        # 5. CIRCUIT BREAKER
+        # 6. CIRCUIT BREAKER
         # =========================================
 
         allowed = self.circuit_breaker.allow(
@@ -222,12 +252,26 @@ class IncidentService:
                 message=remediation_message,
             )
 
-            print(
-                "Decision    : ESCALATE"
+            self.repository.create_attempt(
+                incident_id=database_incident_id,
+                attempt_number=attempt,
+                action="ESCALATE",
+                success=False,
+                message=remediation_message,
+                original_build_number=build_number,
+                retry_build_number=None,
+                queue_url=None,
+                verification_result=None,
+            )
+
+            self.repository.add_audit_event(
+                incident_id=database_incident_id,
+                event_type="CIRCUIT_BREAKER_OPEN",
+                message=remediation_message,
             )
 
             print(
-                f"Message     : {remediation_message}"
+                "Decision    : ESCALATE"
             )
 
             print("=" * 60)
@@ -235,19 +279,20 @@ class IncidentService:
             return incident
 
         # =========================================
-        # 6. PHASE 2 REMEDIATION
+        # 7. REMEDIATION
         # =========================================
 
         print("-" * 60)
-        print("PHASE 2 REMEDIATION")
+        print("PHASE 3 REMEDIATION")
         print("-" * 60)
 
-        print(
-            f"Category    : {classification.category}"
-        )
-
-        print(
-            f"Action      : {classification.action}"
+        self.repository.add_audit_event(
+            incident_id=database_incident_id,
+            event_type="REMEDIATION_STARTED",
+            message=(
+                f"Attempt {attempt}: "
+                f"{classification.action}"
+            ),
         )
 
         try:
@@ -264,12 +309,12 @@ class IncidentService:
                 "action": "ESCALATE",
                 "success": False,
                 "message": (
-                    f"Unhandled remediation error: {exc}"
+                    f"Remediation exception: {exc}"
                 ),
             }
 
         # =========================================
-        # 7. STORE RESULT
+        # 8. PERSIST REMEDIATION
         # =========================================
 
         incident.remediation = RemediationResult(
@@ -287,8 +332,42 @@ class IncidentService:
             ),
         )
 
+        self.repository.create_attempt(
+            incident_id=database_incident_id,
+            attempt_number=attempt,
+            action=result["action"],
+            success=result["success"],
+            message=result["message"],
+            original_build_number=build_number,
+            retry_build_number=result.get(
+                "new_build_number"
+            ),
+            queue_url=result.get(
+                "queue_url"
+            ),
+            verification_result=result.get(
+                "verification_result"
+            ),
+        )
+
         # =========================================
-        # 8. LOG RESULT
+        # 9. AUDIT RESULT
+        # =========================================
+
+        event_type = (
+            "REMEDIATION_SUCCEEDED"
+            if result["success"]
+            else "REMEDIATION_ESCALATED"
+        )
+
+        self.repository.add_audit_event(
+            incident_id=database_incident_id,
+            event_type=event_type,
+            message=result["message"],
+        )
+
+        # =========================================
+        # LOG RESULT
         # =========================================
 
         print("-" * 60)
@@ -325,7 +404,7 @@ class IncidentService:
             )
 
         # =========================================
-        # 9. RESET CIRCUIT AFTER SUCCESS
+        # 10. RESET CIRCUIT AFTER SUCCESS
         # =========================================
 
         if result["success"]:

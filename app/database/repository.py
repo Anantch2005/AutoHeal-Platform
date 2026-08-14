@@ -91,7 +91,6 @@ class IncidentRepository:
                 retry_build_number=retry_build_number,
                 queue_url=queue_url,
                 verification_result=verification_result,
-                completed_at=datetime.utcnow(),
             )
 
             session.add(record)
@@ -129,5 +128,6 @@ class IncidentRepository:
                 == incident_id
             )
 
-            return len(session.scalars(statement).all())
-            
+            return len(
+                session.scalars(statement).all()
+            )
