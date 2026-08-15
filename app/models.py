@@ -26,8 +26,14 @@ class FailureClassification(BaseModel):
     action: str
     reason: str
     confidence: float
-    matched_pattern: Optional[str] = None
+    matched_pattern: str | None = None
 
+    source: str = "rules"
+
+    ai_root_cause: str | None = None
+    ai_reasoning: str | None = None
+    ai_confidence: float | None = None
+    ai_evidence: list[str] = []
 
 class RemediationResult(BaseModel):
     action: str

@@ -17,6 +17,12 @@ class Settings(BaseSettings):
         "autoheal:autoheal@postgres:5432/autoheal"
     )
 
+    # AI
+    ai_enabled: bool = False
+    openai_api_key: str | None = None
+    ai_model: str = "gpt-5-mini"
+    ai_max_log_chars: int = 12000
+
     model_config = SettingsConfigDict(
         env_file=".env",
         extra="ignore",
