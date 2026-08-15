@@ -8,6 +8,7 @@ from app.models import (
     FailureClassification,
     RemediationResult,
 )
+from app.policy.engine import PolicyEngine
 from app.remediation.executor import RemediationExecutor
 from app.safety.circuit_breaker import CircuitBreaker
 
@@ -17,8 +18,14 @@ class IncidentService:
     def __init__(self):
         self.jenkins = JenkinsCollector()
         self.classifier = FailureClassifier()
+
+        # Phase 4 policy engine
+        self.policy = PolicyEngine()
+
+        # Remediation engine
         self.remediation = RemediationExecutor()
 
+        # Safety protection
         self.circuit_breaker = CircuitBreaker(
             max_attempts=3,
             window_minutes=30,
@@ -45,6 +52,7 @@ class IncidentService:
                 f"Duplicate incident ignored: "
                 f"{job_name} #{build_number}"
             )
+
             return None
 
         # =========================================
@@ -59,7 +67,7 @@ class IncidentService:
         log = build.console_log or ""
 
         # =========================================
-        # 2. CLASSIFY
+        # 2. CLASSIFY FAILURE
         # =========================================
 
         classification_data = self.classifier.classify(
@@ -71,7 +79,7 @@ class IncidentService:
         )
 
         # =========================================
-        # 3. CREATE INCIDENT OBJECT
+        # 3. CREATE INCIDENT
         # =========================================
 
         incident = Incident(
@@ -120,7 +128,7 @@ class IncidentService:
         )
 
         # =========================================
-        # LOG
+        # LOG INCIDENT
         # =========================================
 
         print()
@@ -165,34 +173,75 @@ class IncidentService:
         )
 
         # =========================================
-        # 5. UNSAFE FAILURE
+        # 5. POLICY ENGINE
         # =========================================
 
-        if classification.action in (
-            "DO_NOT_HEAL",
-            "ESCALATE",
-        ):
+        policy = self.policy.evaluate(
+            category=classification.category,
+            classifier_action=classification.action,
+        )
 
-            remediation_message = (
-                classification.reason
-            )
+        print("-" * 60)
+        print("POLICY DECISION")
+        print("-" * 60)
+
+        print(
+            f"Risk Level       : {policy.risk_level}"
+        )
+
+        print(
+            f"Allowed          : {policy.allowed}"
+        )
+
+        print(
+            f"Policy Action    : {policy.action}"
+        )
+
+        print(
+            f"Max Attempts     : {policy.max_attempts}"
+        )
+
+        print(
+            f"Approval Needed  : "
+            f"{policy.requires_approval}"
+        )
+
+        print(
+            f"Reason           : {policy.reason}"
+        )
+
+        # Persist policy decision
+        self.repository.add_audit_event(
+            incident_id=database_incident_id,
+            event_type="POLICY_EVALUATED",
+            message=(
+                f"category={policy.category}; "
+                f"risk={policy.risk_level}; "
+                f"allowed={policy.allowed}; "
+                f"action={policy.action}; "
+                f"max_attempts={policy.max_attempts}; "
+                f"approval={policy.requires_approval}"
+            ),
+        )
+
+        # =========================================
+        # 6. POLICY DENIED
+        # =========================================
+
+        if not policy.allowed:
+
+            remediation_message = policy.reason
 
             incident.remediation = RemediationResult(
-                action=classification.action,
+                action=policy.action,
                 success=False,
-                message=remediation_message,
-            )
-
-            self.repository.add_audit_event(
-                incident_id=database_incident_id,
-                event_type="REMEDIATION_BLOCKED",
                 message=remediation_message,
             )
 
             self.repository.create_attempt(
                 incident_id=database_incident_id,
-                attempt_number=1,
-                action=classification.action,
+                attempt_number=0,
+                action=policy.action,
                 success=False,
                 message=remediation_message,
                 original_build_number=build_number,
@@ -201,12 +250,22 @@ class IncidentService:
                 verification_result=None,
             )
 
+            self.repository.add_audit_event(
+                incident_id=database_incident_id,
+                event_type="POLICY_DENIED",
+                message=remediation_message,
+            )
+
             print("-" * 60)
-            print("SAFETY DECISION")
+            print("POLICY RESULT")
             print("-" * 60)
 
             print(
-                f"Decision    : {classification.action}"
+                f"Decision    : {policy.action}"
+            )
+
+            print(
+                f"Message     : {remediation_message}"
             )
 
             print("=" * 60)
@@ -214,17 +273,17 @@ class IncidentService:
             return incident
 
         # =========================================
-        # 6. CIRCUIT BREAKER
+        # 7. CIRCUIT BREAKER
         # =========================================
 
         allowed = self.circuit_breaker.allow(
             job_name,
-            classification.category,
+            policy.category,
         )
 
         attempt = self.circuit_breaker.count(
             job_name,
-            classification.category,
+            policy.category,
         )
 
         print("-" * 60)
@@ -239,17 +298,23 @@ class IncidentService:
             f"Allowed     : {allowed}"
         )
 
-        if not allowed:
+        # =========================================
+        # 8. POLICY ATTEMPT LIMIT
+        # =========================================
 
-            remediation_message = (
-                "Circuit breaker opened after "
-                "repeated remediation attempts."
+        if attempt > policy.max_attempts:
+
+            message = (
+                f"Policy limit reached for "
+                f"{policy.category}. "
+                f"Maximum attempts: "
+                f"{policy.max_attempts}."
             )
 
             incident.remediation = RemediationResult(
                 action="ESCALATE",
                 success=False,
-                message=remediation_message,
+                message=message,
             )
 
             self.repository.create_attempt(
@@ -257,7 +322,54 @@ class IncidentService:
                 attempt_number=attempt,
                 action="ESCALATE",
                 success=False,
-                message=remediation_message,
+                message=message,
+                original_build_number=build_number,
+                retry_build_number=None,
+                queue_url=None,
+                verification_result=None,
+            )
+
+            self.repository.add_audit_event(
+                incident_id=database_incident_id,
+                event_type="POLICY_LIMIT_REACHED",
+                message=message,
+            )
+
+            print(
+                "Decision    : ESCALATE"
+            )
+
+            print(
+                f"Message     : {message}"
+            )
+
+            print("=" * 60)
+
+            return incident
+
+        # =========================================
+        # 9. CIRCUIT BREAKER DENIED
+        # =========================================
+
+        if not allowed:
+
+            message = (
+                "Circuit breaker opened after "
+                "repeated remediation attempts."
+            )
+
+            incident.remediation = RemediationResult(
+                action="ESCALATE",
+                success=False,
+                message=message,
+            )
+
+            self.repository.create_attempt(
+                incident_id=database_incident_id,
+                attempt_number=attempt,
+                action="ESCALATE",
+                success=False,
+                message=message,
                 original_build_number=build_number,
                 retry_build_number=None,
                 queue_url=None,
@@ -267,7 +379,7 @@ class IncidentService:
             self.repository.add_audit_event(
                 incident_id=database_incident_id,
                 event_type="CIRCUIT_BREAKER_OPEN",
-                message=remediation_message,
+                message=message,
             )
 
             print(
@@ -279,19 +391,31 @@ class IncidentService:
             return incident
 
         # =========================================
-        # 7. REMEDIATION
+        # 10. POLICY-CONTROLLED REMEDIATION
         # =========================================
 
         print("-" * 60)
-        print("PHASE 3 REMEDIATION")
+        print("POLICY-CONTROLLED REMEDIATION")
         print("-" * 60)
+
+        print(
+            f"Policy Action : {policy.action}"
+        )
+
+        print(
+            f"Risk Level    : {policy.risk_level}"
+        )
+
+        print(
+            f"Max Attempts  : {policy.max_attempts}"
+        )
 
         self.repository.add_audit_event(
             incident_id=database_incident_id,
             event_type="REMEDIATION_STARTED",
             message=(
                 f"Attempt {attempt}: "
-                f"{classification.action}"
+                f"{policy.action}"
             ),
         )
 
@@ -299,8 +423,8 @@ class IncidentService:
 
             result = await self.remediation.execute(
                 job_name=job_name,
-                category=classification.category,
-                action=classification.action,
+                category=policy.category,
+                action=policy.action,
             )
 
         except Exception as exc:
@@ -314,7 +438,7 @@ class IncidentService:
             }
 
         # =========================================
-        # 8. PERSIST REMEDIATION
+        # 11. STORE REMEDIATION RESULT
         # =========================================
 
         incident.remediation = RemediationResult(
@@ -351,7 +475,7 @@ class IncidentService:
         )
 
         # =========================================
-        # 9. AUDIT RESULT
+        # 12. AUDIT RESULT
         # =========================================
 
         event_type = (
@@ -367,7 +491,7 @@ class IncidentService:
         )
 
         # =========================================
-        # LOG RESULT
+        # 13. LOG RESULT
         # =========================================
 
         print("-" * 60)
@@ -387,31 +511,34 @@ class IncidentService:
         )
 
         if result.get("queue_url"):
+
             print(
                 f"Queue       : {result['queue_url']}"
             )
 
         if result.get("new_build_number"):
+
             print(
                 f"New Build   : "
                 f"#{result['new_build_number']}"
             )
 
         if result.get("verification_result"):
+
             print(
                 f"Verified    : "
                 f"{result['verification_result']}"
             )
 
         # =========================================
-        # 10. RESET CIRCUIT AFTER SUCCESS
+        # 14. RESET CIRCUIT AFTER SUCCESS
         # =========================================
 
         if result["success"]:
 
             self.circuit_breaker.reset(
                 job_name,
-                classification.category,
+                policy.category,
             )
 
             print(
