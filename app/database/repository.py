@@ -1,5 +1,3 @@
-from datetime import datetime
-
 from sqlalchemy import select
 
 from app.database.database import SessionLocal
@@ -41,6 +39,15 @@ class IncidentRepository:
         matched_pattern: str | None,
         confidence: float | None,
         console_log: str | None,
+
+        # =========================================
+        # PHASE 5 - AI
+        # =========================================
+
+        classifier_source: str | None = None,
+        ai_root_cause: str | None = None,
+        ai_reasoning: str | None = None,
+        ai_confidence: float | None = None,
     ) -> int:
 
         with SessionLocal() as session:
@@ -58,6 +65,12 @@ class IncidentRepository:
                 matched_pattern=matched_pattern,
                 confidence=confidence,
                 console_log=console_log,
+
+                # Phase 5
+                classifier_source=classifier_source,
+                ai_root_cause=ai_root_cause,
+                ai_reasoning=ai_reasoning,
+                ai_confidence=ai_confidence,
             )
 
             session.add(record)

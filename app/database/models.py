@@ -85,6 +85,29 @@ class IncidentRecord(Base):
         nullable=True,
     )
 
+    # =========================================
+    # PHASE 5 - AI CLASSIFICATION
+    # =========================================
+
+    classifier_source: Mapped[str | None] = mapped_column(
+        String(50),
+        nullable=True,
+    )
+
+    ai_root_cause: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    ai_reasoning: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    ai_confidence: Mapped[float | None] = mapped_column(
+        nullable=True,
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
         default=datetime.utcnow,

@@ -1,5 +1,6 @@
 import uuid
 
+from app.ai.classifier import AIClassifier
 from app.classifier.classifier import FailureClassifier
 from app.collectors.jenkins import JenkinsCollector
 from app.database.repository import IncidentRepository
@@ -18,6 +19,9 @@ class IncidentService:
     def __init__(self):
         self.jenkins = JenkinsCollector()
         self.classifier = FailureClassifier()
+
+        # Phase 5 AI fallback
+        self.ai_classifier = AIClassifier()
 
         # Phase 4 policy engine
         self.policy = PolicyEngine()
@@ -41,7 +45,7 @@ class IncidentService:
     ) -> Incident | None:
 
         # =========================================
-        # 0. PERSISTENT DUPLICATE PROTECTION
+        # 1. PERSISTENT DUPLICATE PROTECTION
         # =========================================
 
         if self.repository.exists(
@@ -56,7 +60,7 @@ class IncidentService:
             return None
 
         # =========================================
-        # 1. COLLECT EVIDENCE
+        # 2. COLLECT EVIDENCE
         # =========================================
 
         build = await self.jenkins.get_build_info(
@@ -67,7 +71,7 @@ class IncidentService:
         log = build.console_log or ""
 
         # =========================================
-        # 2. CLASSIFY FAILURE
+        # 3. RULE-BASED CLASSIFICATION
         # =========================================
 
         classification_data = self.classifier.classify(
@@ -79,7 +83,109 @@ class IncidentService:
         )
 
         # =========================================
-        # 3. CREATE INCIDENT
+        # 4. AI FALLBACK FOR UNKNOWN FAILURES
+        # =========================================
+
+        ai_was_used = False
+
+        if (
+            classification.category == "UNKNOWN"
+            and self.ai_classifier.enabled
+        ):
+
+            print("-" * 60)
+            print("AI CLASSIFICATION")
+            print("-" * 60)
+
+            try:
+
+                ai_result = (
+                    await self.ai_classifier.classify(
+                        log
+                    )
+                )
+
+                ai_was_used = True
+
+                classification = FailureClassification(
+                    category=ai_result.category,
+
+                    # AI never controls remediation.
+                    # Policy Engine decides that.
+                    action="ESCALATE",
+
+                    reason=(
+                        f"AI diagnosis: "
+                        f"{ai_result.root_cause}"
+                    ),
+
+                    confidence=ai_result.confidence,
+
+                    matched_pattern=None,
+
+                    source="ai",
+
+                    ai_root_cause=(
+                        ai_result.root_cause
+                    ),
+
+                    ai_reasoning=(
+                        ai_result.reasoning
+                    ),
+
+                    ai_confidence=(
+                        ai_result.confidence
+                    ),
+
+                    ai_evidence=(
+                        ai_result.matched_evidence
+                    ),
+                )
+
+                print(
+                    f"AI Category  : "
+                    f"{ai_result.category}"
+                )
+
+                print(
+                    f"AI Root Cause: "
+                    f"{ai_result.root_cause}"
+                )
+
+                print(
+                    f"AI Reasoning : "
+                    f"{ai_result.reasoning}"
+                )
+
+                print(
+                    f"AI Confidence: "
+                    f"{ai_result.confidence}"
+                )
+
+            except Exception as exc:
+
+                print(
+                    f"AI classification failed: {exc}"
+                )
+
+                classification = FailureClassification(
+                    category="UNKNOWN",
+                    action="ESCALATE",
+                    reason=(
+                        "Rules could not classify the "
+                        "failure and AI classification failed."
+                    ),
+                    confidence=0.0,
+                    matched_pattern=None,
+                    source="ai_error",
+                    ai_root_cause=None,
+                    ai_reasoning=str(exc),
+                    ai_confidence=None,
+                    ai_evidence=[],
+                )
+
+        # =========================================
+        # 5. CREATE INCIDENT
         # =========================================
 
         incident = Incident(
@@ -96,7 +202,7 @@ class IncidentService:
         )
 
         # =========================================
-        # 4. PERSIST INCIDENT
+        # 6. PERSIST INCIDENT
         # =========================================
 
         database_incident_id = (
@@ -107,14 +213,33 @@ class IncidentService:
                 build_number=incident.build_number,
                 status=incident.status,
                 build_url=incident.build_url,
-                failure_category=classification.category,
-                failure_action=classification.action,
+                failure_category=(
+                    classification.category
+                ),
+                failure_action=(
+                    classification.action
+                ),
                 reason=classification.reason,
                 matched_pattern=(
                     classification.matched_pattern
                 ),
-                confidence=classification.confidence,
+                confidence=(
+                    classification.confidence
+                ),
                 console_log=incident.console_log,
+
+                classifier_source=(
+                    classification.source
+                ),
+                ai_root_cause=(
+                    classification.ai_root_cause
+                ),
+                ai_reasoning=(
+                    classification.ai_reasoning
+                ),
+                ai_confidence=(
+                    classification.ai_confidence
+                ),
             )
         )
 
@@ -128,6 +253,25 @@ class IncidentService:
         )
 
         # =========================================
+        # 7. AI AUDIT
+        # =========================================
+
+        if ai_was_used:
+
+            self.repository.add_audit_event(
+                incident_id=database_incident_id,
+                event_type="AI_CLASSIFICATION",
+                message=(
+                    f"category="
+                    f"{classification.category}; "
+                    f"confidence="
+                    f"{classification.confidence}; "
+                    f"root_cause="
+                    f"{classification.ai_root_cause or ''}"
+                ),
+            )
+
+        # =========================================
         # LOG INCIDENT
         # =========================================
 
@@ -137,7 +281,8 @@ class IncidentService:
         print("=" * 60)
 
         print(
-            f"Incident ID : {incident.incident_id}"
+            f"Incident ID : "
+            f"{incident.incident_id}"
         )
 
         print(
@@ -157,23 +302,32 @@ class IncidentService:
         print("-" * 60)
 
         print(
-            f"Category    : {classification.category}"
+            f"Category    : "
+            f"{classification.category}"
         )
 
         print(
-            f"Action      : {classification.action}"
+            f"Action      : "
+            f"{classification.action}"
         )
 
         print(
-            f"Confidence  : {classification.confidence}"
+            f"Source      : "
+            f"{classification.source}"
         )
 
         print(
-            f"Reason      : {classification.reason}"
+            f"Confidence  : "
+            f"{classification.confidence}"
+        )
+
+        print(
+            f"Reason      : "
+            f"{classification.reason}"
         )
 
         # =========================================
-        # 5. POLICY ENGINE
+        # 8. POLICY ENGINE
         # =========================================
 
         policy = self.policy.evaluate(
@@ -186,19 +340,23 @@ class IncidentService:
         print("-" * 60)
 
         print(
-            f"Risk Level       : {policy.risk_level}"
+            f"Risk Level       : "
+            f"{policy.risk_level}"
         )
 
         print(
-            f"Allowed          : {policy.allowed}"
+            f"Allowed          : "
+            f"{policy.allowed}"
         )
 
         print(
-            f"Policy Action    : {policy.action}"
+            f"Policy Action    : "
+            f"{policy.action}"
         )
 
         print(
-            f"Max Attempts     : {policy.max_attempts}"
+            f"Max Attempts     : "
+            f"{policy.max_attempts}"
         )
 
         print(
@@ -207,10 +365,10 @@ class IncidentService:
         )
 
         print(
-            f"Reason           : {policy.reason}"
+            f"Reason           : "
+            f"{policy.reason}"
         )
 
-        # Persist policy decision
         self.repository.add_audit_event(
             incident_id=database_incident_id,
             event_type="POLICY_EVALUATED",
@@ -219,23 +377,25 @@ class IncidentService:
                 f"risk={policy.risk_level}; "
                 f"allowed={policy.allowed}; "
                 f"action={policy.action}; "
-                f"max_attempts={policy.max_attempts}; "
-                f"approval={policy.requires_approval}"
+                f"max_attempts="
+                f"{policy.max_attempts}; "
+                f"approval="
+                f"{policy.requires_approval}"
             ),
         )
 
         # =========================================
-        # 6. POLICY DENIED
+        # 9. POLICY DENIED
         # =========================================
 
         if not policy.allowed:
 
-            remediation_message = policy.reason
-
-            incident.remediation = RemediationResult(
-                action=policy.action,
-                success=False,
-                message=remediation_message,
+            incident.remediation = (
+                RemediationResult(
+                    action=policy.action,
+                    success=False,
+                    message=policy.reason,
+                )
             )
 
             self.repository.create_attempt(
@@ -243,7 +403,7 @@ class IncidentService:
                 attempt_number=0,
                 action=policy.action,
                 success=False,
-                message=remediation_message,
+                message=policy.reason,
                 original_build_number=build_number,
                 retry_build_number=None,
                 queue_url=None,
@@ -253,7 +413,7 @@ class IncidentService:
             self.repository.add_audit_event(
                 incident_id=database_incident_id,
                 event_type="POLICY_DENIED",
-                message=remediation_message,
+                message=policy.reason,
             )
 
             print("-" * 60)
@@ -261,11 +421,13 @@ class IncidentService:
             print("-" * 60)
 
             print(
-                f"Decision    : {policy.action}"
+                f"Decision    : "
+                f"{policy.action}"
             )
 
             print(
-                f"Message     : {remediation_message}"
+                f"Message     : "
+                f"{policy.reason}"
             )
 
             print("=" * 60)
@@ -273,7 +435,7 @@ class IncidentService:
             return incident
 
         # =========================================
-        # 7. CIRCUIT BREAKER
+        # 10. CIRCUIT BREAKER
         # =========================================
 
         allowed = self.circuit_breaker.allow(
@@ -299,7 +461,7 @@ class IncidentService:
         )
 
         # =========================================
-        # 8. POLICY ATTEMPT LIMIT
+        # 11. POLICY ATTEMPT LIMIT
         # =========================================
 
         if attempt > policy.max_attempts:
@@ -311,10 +473,12 @@ class IncidentService:
                 f"{policy.max_attempts}."
             )
 
-            incident.remediation = RemediationResult(
-                action="ESCALATE",
-                success=False,
-                message=message,
+            incident.remediation = (
+                RemediationResult(
+                    action="ESCALATE",
+                    success=False,
+                    message=message,
+                )
             )
 
             self.repository.create_attempt(
@@ -348,7 +512,7 @@ class IncidentService:
             return incident
 
         # =========================================
-        # 9. CIRCUIT BREAKER DENIED
+        # 12. CIRCUIT BREAKER DENIED
         # =========================================
 
         if not allowed:
@@ -358,10 +522,12 @@ class IncidentService:
                 "repeated remediation attempts."
             )
 
-            incident.remediation = RemediationResult(
-                action="ESCALATE",
-                success=False,
-                message=message,
+            incident.remediation = (
+                RemediationResult(
+                    action="ESCALATE",
+                    success=False,
+                    message=message,
+                )
             )
 
             self.repository.create_attempt(
@@ -391,7 +557,7 @@ class IncidentService:
             return incident
 
         # =========================================
-        # 10. POLICY-CONTROLLED REMEDIATION
+        # 13. POLICY-CONTROLLED REMEDIATION
         # =========================================
 
         print("-" * 60)
@@ -399,15 +565,18 @@ class IncidentService:
         print("-" * 60)
 
         print(
-            f"Policy Action : {policy.action}"
+            f"Policy Action : "
+            f"{policy.action}"
         )
 
         print(
-            f"Risk Level    : {policy.risk_level}"
+            f"Risk Level    : "
+            f"{policy.risk_level}"
         )
 
         print(
-            f"Max Attempts  : {policy.max_attempts}"
+            f"Max Attempts  : "
+            f"{policy.max_attempts}"
         )
 
         self.repository.add_audit_event(
@@ -433,27 +602,30 @@ class IncidentService:
                 "action": "ESCALATE",
                 "success": False,
                 "message": (
-                    f"Remediation exception: {exc}"
+                    f"Remediation exception: "
+                    f"{exc}"
                 ),
             }
 
         # =========================================
-        # 11. STORE REMEDIATION RESULT
+        # 14. STORE REMEDIATION RESULT
         # =========================================
 
-        incident.remediation = RemediationResult(
-            action=result["action"],
-            success=result["success"],
-            message=result["message"],
-            new_build_number=result.get(
-                "new_build_number"
-            ),
-            verification_result=result.get(
-                "verification_result"
-            ),
-            queue_url=result.get(
-                "queue_url"
-            ),
+        incident.remediation = (
+            RemediationResult(
+                action=result["action"],
+                success=result["success"],
+                message=result["message"],
+                new_build_number=result.get(
+                    "new_build_number"
+                ),
+                verification_result=result.get(
+                    "verification_result"
+                ),
+                queue_url=result.get(
+                    "queue_url"
+                ),
+            )
         )
 
         self.repository.create_attempt(
@@ -475,7 +647,7 @@ class IncidentService:
         )
 
         # =========================================
-        # 12. AUDIT RESULT
+        # 15. AUDIT RESULT
         # =========================================
 
         event_type = (
@@ -491,7 +663,7 @@ class IncidentService:
         )
 
         # =========================================
-        # 13. LOG RESULT
+        # 16. LOG RESULT
         # =========================================
 
         print("-" * 60)
@@ -499,21 +671,25 @@ class IncidentService:
         print("-" * 60)
 
         print(
-            f"Action      : {result['action']}"
+            f"Action      : "
+            f"{result['action']}"
         )
 
         print(
-            f"Success     : {result['success']}"
+            f"Success     : "
+            f"{result['success']}"
         )
 
         print(
-            f"Message     : {result['message']}"
+            f"Message     : "
+            f"{result['message']}"
         )
 
         if result.get("queue_url"):
 
             print(
-                f"Queue       : {result['queue_url']}"
+                f"Queue       : "
+                f"{result['queue_url']}"
             )
 
         if result.get("new_build_number"):
@@ -523,7 +699,9 @@ class IncidentService:
                 f"#{result['new_build_number']}"
             )
 
-        if result.get("verification_result"):
+        if result.get(
+            "verification_result"
+        ):
 
             print(
                 f"Verified    : "
@@ -531,7 +709,7 @@ class IncidentService:
             )
 
         # =========================================
-        # 14. RESET CIRCUIT AFTER SUCCESS
+        # 17. RESET CIRCUIT AFTER SUCCESS
         # =========================================
 
         if result["success"]:
