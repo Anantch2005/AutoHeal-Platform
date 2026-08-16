@@ -28,6 +28,21 @@ services:
     restart: unless-stopped
 
 
+  ollama:
+    image: ollama/ollama:latest
+    container_name: autoheal-ollama
+
+    ports:
+      - "11434:11434"
+
+    volumes:
+      - ollama_data:/root/.ollama
+
+    gpus: all
+
+    restart: unless-stopped
+
+
   autoheal:
     build: .
 
@@ -41,10 +56,13 @@ services:
 
     environment:
       DATABASE_URL: postgresql+psycopg2://autoheal:autoheal@postgres:5432/autoheal
+      OLLAMA_URL: http://ollama:11434
 
     depends_on:
       postgres:
         condition: service_healthy
+      ollama:
+        condition: service_started
 
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -53,4 +71,7 @@ services:
 
 
 volumes:
+
   postgres_data:
+
+  ollama_data:
