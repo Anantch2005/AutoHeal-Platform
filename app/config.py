@@ -17,10 +17,10 @@ class Settings(BaseSettings):
         "autoheal:autoheal@postgres:5432/autoheal"
     )
 
-    # AI
+    # AI / Ollama
     ai_enabled: bool = False
-    openai_api_key: str | None = None
-    ai_model: str = "gpt-5-mini"
+    ollama_url: str = "http://ollama:11434"
+    ollama_model: str = "llama3.2:3b"
     ai_max_log_chars: int = 12000
 
     model_config = SettingsConfigDict(

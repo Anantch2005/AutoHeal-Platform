@@ -1,7 +1,7 @@
 import json
 import re
 
-from openai import AsyncOpenAI
+import httpx
 
 from app.ai.models import AIClassification
 from app.ai.prompt import SYSTEM_PROMPT
@@ -22,34 +22,20 @@ class AIClassifier:
     }
 
     def __init__(self):
-        self.enabled = (
-            settings.ai_enabled
-            and bool(settings.openai_api_key)
+
+        self.enabled = settings.ai_enabled
+
+        self.base_url = (
+            settings.ollama_url.rstrip("/")
         )
 
-        self.client = (
-            AsyncOpenAI(
-                api_key=settings.openai_api_key
-            )
-            if self.enabled
-            else None
-        )
+        self.model = settings.ollama_model
 
     def _redact(self, log: str) -> str:
-        """
-        Redact common credential/token patterns before
-        sending logs to the external AI provider.
-        """
-
-        redacted = log
 
         patterns = [
             (
                 r"(?i)(authorization:\s*bearer\s+)[^\s]+",
-                r"\1[REDACTED]",
-            ),
-            (
-                r"(?i)(token[\"'=:\s]+)[A-Za-z0-9._-]+",
                 r"\1[REDACTED]",
             ),
             (
@@ -60,7 +46,13 @@ class AIClassifier:
                 r"(?i)(api[_-]?key[\"'=:\s]+)[^\s]+",
                 r"\1[REDACTED]",
             ),
+            (
+                r"(?i)(token[\"'=:\s]+)[^\s]+",
+                r"\1[REDACTED]",
+            ),
         ]
+
+        redacted = log
 
         for pattern, replacement in patterns:
             redacted = re.sub(
@@ -71,7 +63,8 @@ class AIClassifier:
 
         return redacted
 
-    def _build_log(self, log: str) -> str:
+    def _prepare_log(self, log: str) -> str:
+
         redacted = self._redact(log)
 
         return redacted[
@@ -83,99 +76,74 @@ class AIClassifier:
         log: str,
     ) -> AIClassification:
 
-        if not self.enabled or self.client is None:
+        if not self.enabled:
+
             return AIClassification(
                 category="UNKNOWN",
                 root_cause=(
-                    "AI classification is disabled "
-                    "or no API key is configured."
+                    "Local AI classification is disabled."
                 ),
                 reasoning=(
-                    "No AI provider was available."
+                    "AI_ENABLED=false."
                 ),
                 confidence=0.0,
                 matched_evidence=[],
             )
 
-        payload = {
-            "jenkins_log": self._build_log(log),
-        }
-
-        response = await self.client.responses.create(
-            model=settings.ai_model,
-            instructions=SYSTEM_PROMPT,
-            input=json.dumps(payload),
-            text={
-                "format": {
-                    "type": "json_schema",
-                    "name": "autoheal_failure_diagnosis",
-                    "description": (
-                        "Structured diagnosis of an ambiguous "
-                        "Jenkins CI/CD failure."
-                    ),
-                    "strict": True,
-                    "schema": {
-                        "type": "object",
-                        "properties": {
-                            "category": {
-                                "type": "string",
-                                "enum": [
-                                    "FLAKY_TEST",
-                                    "WORKSPACE_FAILURE",
-                                    "DEPENDENCY_FAILURE",
-                                    "NETWORK_FAILURE",
-                                    "DOCKER_FAILURE",
-                                    "REGISTRY_FAILURE",
-                                    "CODE_FAILURE",
-                                    "UNKNOWN",
-                                ],
-                            },
-                            "root_cause": {
-                                "type": "string"
-                            },
-                            "reasoning": {
-                                "type": "string"
-                            },
-                            "confidence": {
-                                "type": "number",
-                                "minimum": 0,
-                                "maximum": 1,
-                            },
-                            "matched_evidence": {
-                                "type": "array",
-                                "items": {
-                                    "type": "string"
-                                },
-                            },
-                        },
-                        "required": [
-                            "category",
-                            "root_cause",
-                            "reasoning",
-                            "confidence",
-                            "matched_evidence",
-                        ],
-                        "additionalProperties": False,
-                    },
-                }
-            },
+        prompt = (
+            f"{SYSTEM_PROMPT}\n\n"
+            "Jenkins failure log:\n"
+            "--------------------\n"
+            f"{self._prepare_log(log)}\n"
+            "--------------------\n\n"
+            "Return JSON with exactly these fields:\n"
+            "{\n"
+            '  "category": "...",\n'
+            '  "root_cause": "...",\n'
+            '  "reasoning": "...",\n'
+            '  "confidence": 0.0,\n'
+            '  "matched_evidence": ["..."]\n'
+            "}"
         )
 
-        parsed = json.loads(
-            response.output_text
-        )
+        async with httpx.AsyncClient() as client:
+
+            response = await client.post(
+                f"{self.base_url}/api/generate",
+                json={
+                    "model": self.model,
+                    "prompt": prompt,
+                    "stream": False,
+                    "format": "json",
+                },
+                timeout=120,
+            )
+
+            response.raise_for_status()
+
+            data = response.json()
+
+        raw = data.get("response")
+
+        if not raw:
+            raise RuntimeError(
+                "Ollama returned an empty response."
+            )
+
+        parsed = json.loads(raw)
 
         result = AIClassification(**parsed)
 
         if result.category not in self.ALLOWED_CATEGORIES:
+
             return AIClassification(
                 category="UNKNOWN",
                 root_cause=(
-                    "AI returned an unsupported category."
+                    "Ollama returned an unsupported "
+                    "failure category."
                 ),
                 reasoning=(
-                    "The AI classification was rejected "
-                    "because the category was invalid."
+                    "AI output failed category validation."
                 ),
                 confidence=0.0,
                 matched_evidence=[],
