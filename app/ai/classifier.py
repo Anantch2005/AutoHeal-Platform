@@ -11,7 +11,6 @@ from app.config import settings
 class AIClassifier:
 
     ALLOWED_CATEGORIES = {
-        "FLAKY_TEST",
         "WORKSPACE_FAILURE",
         "DEPENDENCY_FAILURE",
         "NETWORK_FAILURE",

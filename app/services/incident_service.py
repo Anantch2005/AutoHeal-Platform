@@ -333,6 +333,8 @@ class IncidentService:
         policy = self.policy.evaluate(
             category=classification.category,
             classifier_action=classification.action,
+            source=classification.source,
+            confidence=classification.confidence,
         )
 
         print("-" * 60)
