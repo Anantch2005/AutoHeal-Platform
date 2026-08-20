@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     ollama_model: str = "llama3.2:3b"
     ai_max_log_chars: int = 12000
 
+    otel_endpoint: str = (
+        "http://otel-collector:4318"
+    )
+
     model_config = SettingsConfigDict(
         env_file=".env",
         extra="ignore",

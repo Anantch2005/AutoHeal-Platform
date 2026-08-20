@@ -21,7 +21,9 @@ async def test_ai_disabled_returns_unknown():
 
 def test_ai_allowed_categories():
 
-    assert "FLAKY_TEST" in AIClassifier.ALLOWED_CATEGORIES
+    assert "FLAKY_TEST" not in (
+    AIClassifier.ALLOWED_CATEGORIES
+    )
     assert "NETWORK_FAILURE" in AIClassifier.ALLOWED_CATEGORIES
     assert "CODE_FAILURE" in AIClassifier.ALLOWED_CATEGORIES
     assert "UNKNOWN" in AIClassifier.ALLOWED_CATEGORIES

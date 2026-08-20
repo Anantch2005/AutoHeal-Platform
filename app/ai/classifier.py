@@ -4,7 +4,10 @@ import re
 import httpx
 
 from app.ai.models import AIClassification
-from app.ai.prompt import SYSTEM_PROMPT
+from app.ai.prompt import (
+    SYSTEM_PROMPT,
+    DIAGNOSTIC_GUIDANCE,
+)
 from app.config import settings
 
 
@@ -91,6 +94,7 @@ class AIClassifier:
 
         prompt = (
             f"{SYSTEM_PROMPT}\n\n"
+            f"{DIAGNOSTIC_GUIDANCE}\n\n"
             "Jenkins failure log:\n"
             "--------------------\n"
             f"{self._prepare_log(log)}\n"
