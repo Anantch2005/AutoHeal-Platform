@@ -1,0 +1,144 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Total Incidents",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 0
+      },
+      "targets": [
+        {
+          "expr": "sum(autoheal_incidents_total)",
+          "legendFormat": "Incidents"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Healed",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 0
+      },
+      "targets": [
+        {
+          "expr": "sum(autoheal_healed_total)",
+          "legendFormat": "Healed"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Escalated",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 0
+      },
+      "targets": [
+        {
+          "expr": "sum(autoheal_escalated_total)",
+          "legendFormat": "Escalated"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Policy Denials",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 0
+      },
+      "targets": [
+        {
+          "expr": "sum(autoheal_policy_denials_total)",
+          "legendFormat": "Denied"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Incidents",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 4
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(autoheal_incidents_total[5m]))",
+          "legendFormat": "Incidents/sec"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Remediation Success",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 4
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(autoheal_remediation_success_total[5m]))",
+          "legendFormat": "Success"
+        },
+        {
+          "expr": "sum(rate(autoheal_remediation_failure_total[5m]))",
+          "legendFormat": "Failure"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "AI Classifications",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 12
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(autoheal_ai_classifications_total[5m]))",
+          "legendFormat": "AI classifications/sec"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Incident Processing Duration",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 12
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(autoheal_processing_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p95"
+        }
+      ]
+    }
+  ],
+  "schemaVersion": 39,
+  "title": "AutoHeal Reliability Dashboard",
+  "uid": "autoheal",
+  "version": 1
+}
