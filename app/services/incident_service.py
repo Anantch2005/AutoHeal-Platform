@@ -60,7 +60,7 @@ class IncidentService:
         processing_duration.record(
             time.perf_counter() - start_time,
             {
-                "job": job_name,
+                "job_name": job_name,
             },
         )
 
@@ -80,7 +80,7 @@ class IncidentService:
             1,
             {
                 "source": "jenkins",
-                "job": job_name,
+                "job_name": job_name,
             },
         )
 
