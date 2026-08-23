@@ -15,7 +15,7 @@
       },
       "targets": [
         {
-          "expr": "sum(autoheal_incidents_total)",
+          "expr": "sum(autoheal_incidents_total) or vector(0)",
           "legendFormat": "Incidents"
         }
       ]
@@ -31,7 +31,7 @@
       },
       "targets": [
         {
-          "expr": "sum(autoheal_healed_total)",
+          "expr": "sum(autoheal_healed_total) or vector(0)",
           "legendFormat": "Healed"
         }
       ]
@@ -47,7 +47,7 @@
       },
       "targets": [
         {
-          "expr": "sum(autoheal_escalated_total)",
+          "expr": "sum(autoheal_escalated_total) or vector(0)",
           "legendFormat": "Escalated"
         }
       ]
@@ -63,7 +63,7 @@
       },
       "targets": [
         {
-          "expr": "sum(autoheal_policy_denials_total)",
+          "expr": "sum(autoheal_policy_denials_total) or vector(0)",
           "legendFormat": "Denied"
         }
       ]
@@ -79,7 +79,7 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(autoheal_incidents_total[5m]))",
+          "expr": "sum(rate(autoheal_incidents_total[5m])) or vector(0)",
           "legendFormat": "Incidents/sec"
         }
       ]
@@ -95,11 +95,11 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(autoheal_remediation_success_total[5m]))",
+          "expr": "sum(rate(autoheal_remediation_success_total[5m])) or vector(0)",
           "legendFormat": "Success"
         },
         {
-          "expr": "sum(rate(autoheal_remediation_failure_total[5m]))",
+          "expr": "sum(rate(autoheal_remediation_failure_total[5m])) or vector(0)",
           "legendFormat": "Failure"
         }
       ]
