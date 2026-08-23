@@ -76,7 +76,7 @@ services:
 
     volumes:
       - ./observability/tempo.yaml:/etc/tempo.yaml:ro
-      - tempo_data:/var/tempo
+      - tempo_data:/data/tempo
 
     ports:
       - "3200:3200"
