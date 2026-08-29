@@ -1,0 +1,77 @@
+groups:
+
+  - name: autoheal-alerts
+
+    interval: 15s
+
+    rules:
+
+      - alert: AutoHealEscalation
+        expr: increase(autoheal_escalated_total[5m]) > 0
+        for: 15s
+
+        labels:
+          severity: warning
+          service: autoheal
+
+        annotations:
+          summary: "AutoHeal escalated an incident"
+          description: "AutoHeal escalated at least one incident during the last 5 minutes."
+
+
+      - alert: AutoHealRemediationFailure
+        expr: increase(autoheal_remediation_failure_total[5m]) > 0
+        for: 15s
+
+        labels:
+          severity: critical
+          service: autoheal
+
+        annotations:
+          summary: "AutoHeal remediation failed"
+          description: "One or more automatic remediation attempts failed during the last 5 minutes."
+
+
+      - alert: AutoHealPolicyDenial
+        expr: increase(autoheal_policy_denials_total[5m]) > 0
+        for: 15s
+
+        labels:
+          severity: warning
+          service: autoheal
+
+        annotations:
+          summary: "AutoHeal policy denied remediation"
+          description: "The policy engine denied at least one remediation attempt."
+
+
+      - alert: AutoHealAIClassification
+        expr: increase(autoheal_ai_classifications_total[5m]) > 0
+        for: 15s
+
+        labels:
+          severity: info
+          service: autoheal
+
+        annotations:
+          summary: "AutoHeal used local AI classification"
+          description: "Ollama was used to classify at least one incident."
+
+
+      - alert: AutoHealHighProcessingLatency
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(
+              rate(autoheal_processing_duration_seconds_bucket[5m])
+            ) by (le)
+          ) > 120
+        for: 1m
+
+        labels:
+          severity: warning
+          service: autoheal
+
+        annotations:
+          summary: "AutoHeal processing latency is high"
+          description: "The p95 AutoHeal processing latency exceeded 120 seconds."

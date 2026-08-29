@@ -1,0 +1,46 @@
+global:
+  resolve_timeout: 1m
+
+
+route:
+
+  group_by:
+    - alertname
+    - service
+
+  group_wait: 5s
+
+  group_interval: 30s
+
+  repeat_interval: 2h
+
+  receiver: autoheal-webhook
+
+
+  routes:
+
+    - matchers:
+        - severity="critical"
+
+      receiver: autoheal-webhook
+
+    - matchers:
+        - severity="warning"
+
+      receiver: autoheal-webhook
+
+    - matchers:
+        - severity="info"
+
+      receiver: autoheal-webhook
+
+
+receivers:
+
+  - name: autoheal-webhook
+
+    webhook_configs:
+
+      - url: "http://autoheal:8000/alerts/alertmanager"
+
+        send_resolved: true
