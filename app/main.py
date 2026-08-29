@@ -1,8 +1,10 @@
 from fastapi import FastAPI
+
 from opentelemetry.instrumentation.fastapi import (
     FastAPIInstrumentor,
 )
 
+from app.api.alerts import router as alerts_router
 from app.api.webhook import router as webhook_router
 from app.database.database import create_tables
 
@@ -30,6 +32,11 @@ async def health():
 app.include_router(
     webhook_router,
     prefix="/webhook",
+)
+
+app.include_router(
+    alerts_router,
+    prefix="/alerts",
 )
 
 
