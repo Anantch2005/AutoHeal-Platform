@@ -5,12 +5,12 @@ services:
     container_name: autoheal-postgres
 
     environment:
-      POSTGRES_DB: autoheal
-      POSTGRES_USER: autoheal
-      POSTGRES_PASSWORD: autoheal
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
 
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
 
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -19,13 +19,17 @@ services:
       test:
         [
           "CMD-SHELL",
-          "pg_isready -U autoheal -d autoheal"
+          "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"
         ]
+
       interval: 5s
       timeout: 5s
       retries: 10
 
     restart: unless-stopped
+
+    security_opt:
+      - no-new-privileges:true
 
 
   ollama:
@@ -33,7 +37,7 @@ services:
     container_name: autoheal-ollama
 
     ports:
-      - "11434:11434"
+      - "127.0.0.1:11434:11434"
 
     volumes:
       - ollama_data:/root/.ollama
@@ -41,6 +45,9 @@ services:
     gpus: all
 
     restart: unless-stopped
+
+    security_opt:
+      - no-new-privileges:true
 
 
   tempo:
@@ -55,9 +62,12 @@ services:
       - tempo_data:/data/tempo
 
     ports:
-      - "3200:3200"
+      - "127.0.0.1:3200:3200"
 
     restart: unless-stopped
+
+    security_opt:
+      - no-new-privileges:true
 
 
   otel-collector:
@@ -71,14 +81,18 @@ services:
       - ./observability/otel-collector-config.yaml:/etc/otelcol/config.yaml:ro
 
     ports:
-      - "4317:4317"
-      - "4318:4318"
-      - "8889:8889"
+      - "127.0.0.1:4317:4317"
+      - "127.0.0.1:4318:4318"
+      - "127.0.0.1:8889:8889"
 
     depends_on:
-      - tempo
+      tempo:
+        condition: service_started
 
     restart: unless-stopped
+
+    security_opt:
+      - no-new-privileges:true
 
 
   prometheus:
@@ -94,13 +108,18 @@ services:
       - prometheus_data:/prometheus
 
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
 
     depends_on:
-      - otel-collector
-      - alertmanager
+      otel-collector:
+        condition: service_started
+      alertmanager:
+        condition: service_started
 
     restart: unless-stopped
+
+    security_opt:
+      - no-new-privileges:true
 
 
   alertmanager:
@@ -116,12 +135,16 @@ services:
       - alertmanager_data:/alertmanager
 
     ports:
-      - "9093:9093"
+      - "127.0.0.1:9093:9093"
 
     depends_on:
-      - autoheal
+      autoheal:
+        condition: service_started
 
     restart: unless-stopped
+
+    security_opt:
+      - no-new-privileges:true
 
 
   grafana:
@@ -129,7 +152,7 @@ services:
     container_name: autoheal-grafana
 
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
 
     volumes:
       - grafana_data:/var/lib/grafana
@@ -137,29 +160,37 @@ services:
       - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
 
     depends_on:
-      - prometheus
-      - tempo
-      - alertmanager
+      prometheus:
+        condition: service_started
+      tempo:
+        condition: service_started
+      alertmanager:
+        condition: service_started
 
     restart: unless-stopped
+
+    security_opt:
+      - no-new-privileges:true
 
 
   autoheal:
     build: .
+
     container_name: autoheal
 
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
 
     env_file:
       - .env
 
     environment:
-      DATABASE_URL: postgresql+psycopg2://autoheal:autoheal@postgres:5432/autoheal
-      OLLAMA_URL: http://ollama:11434
-      OTEL_ENDPOINT: http://otel-collector:4318
+      DATABASE_URL: ${DATABASE_URL}
+      OLLAMA_URL: ${OLLAMA_URL}
+      OTEL_ENDPOINT: ${OTEL_ENDPOINT}
 
     depends_on:
+
       postgres:
         condition: service_healthy
 
@@ -173,6 +204,17 @@ services:
       - "host.docker.internal:host-gateway"
 
     restart: unless-stopped
+
+    security_opt:
+      - no-new-privileges:true
+
+    cap_drop:
+      - ALL
+
+    read_only: true
+
+    tmpfs:
+      - /tmp
 
 
 volumes:
