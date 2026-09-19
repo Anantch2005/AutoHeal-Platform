@@ -5,21 +5,20 @@ class DependencyRemediator:
         job_name: str,
     ) -> dict:
         """
-        Phase 2 dependency remediation.
+        Prepare the safe dependency recovery contract.
 
-        The Jenkins test stage creates a fresh Python
-        container and installs dependencies again.
-        Therefore a remediation retry provides a clean
-        dependency-install attempt without modifying
-        source code or lockfiles.
+        AutoHeal never edits source code or lockfiles. The actual remediation
+        is the Jenkins retry, which performs a fresh dependency installation.
+        JenkinsRemediator performs that external operation.
         """
 
         return {
             "action": "RETRY_WITH_CLEAN_INSTALL",
             "success": True,
+            "remediation_performed": False,
             "message": (
-                "Dependency failure detected. "
-                "A fresh Jenkins execution will perform "
-                "a clean dependency installation attempt."
+                "Dependency failure classified. AutoHeal does not modify "
+                "source code or lockfiles; remediation is performed by the "
+                "subsequent Jenkins retry with a fresh dependency install."
             ),
         }

@@ -19,11 +19,12 @@ POLICY_RULES = {
         risk_level="LOW",
         allowed=True,
         action="RETRY",
-        max_attempts=1,
+        max_attempts=3,
         requires_approval=False,
         reason=(
             "Known transient test failure. "
-            "A single controlled Jenkins retry is allowed."
+            "Up to three controlled remediation attempts are allowed "
+            "within the safety window; the circuit breaker stops repeats."
         ),
     ),
 
@@ -32,7 +33,7 @@ POLICY_RULES = {
         risk_level="LOW",
         allowed=True,
         action="RETRY",
-        max_attempts=1,
+        max_attempts=3,
         requires_approval=False,
         reason=(
             "Transient network failure may recover "
@@ -45,7 +46,7 @@ POLICY_RULES = {
         risk_level="MEDIUM",
         allowed=True,
         action="RETRY",
-        max_attempts=1,
+        max_attempts=3,
         requires_approval=False,
         reason=(
             "Fresh Jenkins execution can provide a "
@@ -58,11 +59,11 @@ POLICY_RULES = {
         risk_level="MEDIUM",
         allowed=True,
         action="RETRY_WITH_CLEAN_INSTALL",
-        max_attempts=1,
+        max_attempts=3,
         requires_approval=False,
         reason=(
-            "A fresh dependency installation attempt "
-            "is allowed without modifying lockfiles."
+            "Up to three fresh dependency-install attempts are allowed "
+            "within the safety window; lockfiles are never modified."
         ),
     ),
 
@@ -71,11 +72,11 @@ POLICY_RULES = {
         risk_level="MEDIUM",
         allowed=True,
         action="RETRY",
-        max_attempts=1,
+        max_attempts=3,
         requires_approval=False,
         reason=(
-            "Transient Docker execution failure may "
-            "recover on one controlled retry."
+            "Transient Docker execution failures may recover on "
+            "controlled retries within the safety window."
         ),
     ),
 
@@ -84,11 +85,11 @@ POLICY_RULES = {
         risk_level="MEDIUM",
         allowed=True,
         action="RETRY",
-        max_attempts=1,
+        max_attempts=3,
         requires_approval=False,
         reason=(
-            "Transient registry failure may recover "
-            "on one controlled retry."
+            "Transient registry failures may recover on controlled "
+            "retries within the safety window."
         ),
     ),
 

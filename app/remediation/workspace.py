@@ -5,23 +5,20 @@ class WorkspaceRemediator:
         job_name: str,
     ) -> dict:
         """
-        Phase 2 workspace remediation.
+        Prepare the safe workspace recovery contract.
 
-        The Jenkins pipeline starts with Clean Workspace,
-        so a new remediation build provides a fresh
-        workspace execution.
-
-        AutoHeal does not directly modify the Jenkins
-        host filesystem.
+        AutoHeal does not mutate the Jenkins controller/agent filesystem.
+        The actual remediation is the Jenkins retry, which executes the
+        pipeline's clean-workspace path. JenkinsRemediator performs that retry.
         """
 
         return {
             "action": "RETRY_AFTER_WORKSPACE_FAILURE",
             "success": True,
+            "remediation_performed": False,
             "message": (
-                "Workspace failure detected. "
-                "A fresh Jenkins execution will be started. "
-                "AutoHeal does not directly modify the "
-                "Jenkins host filesystem."
+                "Workspace failure classified. No Jenkins host filesystem "
+                "is modified by AutoHeal; remediation is performed by the "
+                "subsequent Jenkins retry using the clean-workspace path."
             ),
         }

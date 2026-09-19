@@ -13,7 +13,7 @@ def test_flaky_test_is_allowed():
     assert decision.allowed is True
     assert decision.risk_level == "LOW"
     assert decision.action == "RETRY"
-    assert decision.max_attempts == 1
+    assert decision.max_attempts == 3
     assert decision.requires_approval is False
 
 

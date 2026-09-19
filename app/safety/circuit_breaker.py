@@ -1,5 +1,5 @@
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 
 class CircuitBreaker:
@@ -32,7 +32,7 @@ class CircuitBreaker:
             return False
 
         self.attempts[key].append(
-            datetime.utcnow()
+            datetime.now(timezone.utc)
         )
 
         return True
@@ -64,7 +64,7 @@ class CircuitBreaker:
 
     def _cleanup(self, key: str):
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
         self.attempts[key] = [
             timestamp
