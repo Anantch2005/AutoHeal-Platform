@@ -12,10 +12,7 @@ class Settings(BaseSettings):
 
     webhook_secret: str
 
-    database_url: str = (
-        "postgresql+psycopg2://"
-        "autoheal:autoheal@postgres:5432/autoheal"
-    )
+    database_url: str
 
     # AI / Ollama
     ai_enabled: bool = False
@@ -29,7 +26,8 @@ class Settings(BaseSettings):
     )
 
     # Alertmanager
-    alertmanager_secret: str | None = None
+    # Required so the Alertmanager webhook cannot be deployed without auth.
+    alertmanager_secret: str
 
     model_config = SettingsConfigDict(
         env_file=".env",

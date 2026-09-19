@@ -16,13 +16,9 @@ async def alertmanager_webhook(
         default=None,
     ),
 ):
-    expected = getattr(
-        settings,
-        "alertmanager_secret",
-        None,
-    )
-
-    if expected and x_autoheal_secret != expected:
+    # Alertmanager notifications must always be authenticated.
+    # Settings validation guarantees the secret exists at startup.
+    if x_autoheal_secret != settings.alertmanager_secret:
         raise HTTPException(
             status_code=401,
             detail="Invalid alertmanager secret",
