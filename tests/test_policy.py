@@ -60,6 +60,7 @@ def test_policy_overrides_unsafe_classifier():
     assert decision.action == "DO_NOT_HEAL"
     assert decision.risk_level == "HIGH"
 
+
 def test_ai_flaky_test_is_never_auto_healed():
 
     engine = PolicyEngine()
@@ -104,4 +105,58 @@ def test_high_confidence_ai_network_failure_can_be_allowed():
     )
 
     assert decision.allowed is True
-    assert decision.action == "RETRY"
+    assert (
+        decision.action
+        == "CONNECTIVITY_CHECK_BACKOFF_AND_RETRY"
+    )
+
+
+def test_workspace_policy_uses_targeted_remediation():
+
+    decision = PolicyEngine().evaluate(
+        category="WORKSPACE_FAILURE",
+        classifier_action=(
+            "CLEAN_WORKSPACE_AND_RETRY"
+        ),
+    )
+
+    assert decision.allowed is True
+    assert (
+        decision.action
+        == "CLEAN_WORKSPACE_AND_RETRY"
+    )
+    assert decision.max_attempts == 3
+
+
+def test_dependency_policy_uses_targeted_remediation():
+
+    decision = PolicyEngine().evaluate(
+        category="DEPENDENCY_FAILURE",
+        classifier_action=(
+            "CLEAN_DEPENDENCY_ENV_AND_RETRY"
+        ),
+    )
+
+    assert decision.allowed is True
+    assert (
+        decision.action
+        == "CLEAN_DEPENDENCY_ENV_AND_RETRY"
+    )
+    assert decision.max_attempts == 3
+
+
+def test_docker_policy_uses_targeted_remediation():
+
+    decision = PolicyEngine().evaluate(
+        category="DOCKER_FAILURE",
+        classifier_action=(
+            "INVALIDATE_DOCKER_CACHE_AND_RETRY"
+        ),
+    )
+
+    assert decision.allowed is True
+    assert (
+        decision.action
+        == "INVALIDATE_DOCKER_CACHE_AND_RETRY"
+    )
+    assert decision.max_attempts == 3

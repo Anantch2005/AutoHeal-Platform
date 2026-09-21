@@ -30,7 +30,11 @@ def test_workspace_failure():
     result = classifier.classify(log)
 
     assert result["category"] == "WORKSPACE_FAILURE"
-    assert result["action"] == "RETRY"
+    assert (
+        result["action"]
+        == "CLEAN_WORKSPACE_AND_RETRY"
+    )
+
 
 def test_code_failure():
 
@@ -46,6 +50,22 @@ def test_code_failure():
     assert result["action"] == "DO_NOT_HEAL"
 
 
+def test_docker_failure():
+
+    log = """
+    failed to solve: failed to build image
+    Cannot connect to the Docker daemon
+    """
+
+    result = classifier.classify(log)
+
+    assert result["category"] == "DOCKER_FAILURE"
+    assert (
+        result["action"]
+        == "INVALIDATE_DOCKER_CACHE_AND_RETRY"
+    )
+
+
 def test_network_failure():
 
     log = """
@@ -56,7 +76,10 @@ def test_network_failure():
     result = classifier.classify(log)
 
     assert result["category"] == "NETWORK_FAILURE"
-    assert result["action"] == "RETRY"
+    assert (
+        result["action"]
+        == "CONNECTIVITY_CHECK_BACKOFF_AND_RETRY"
+    )
 
 
 def test_dependency_failure():
@@ -69,7 +92,10 @@ def test_dependency_failure():
     result = classifier.classify(log)
 
     assert result["category"] == "DEPENDENCY_FAILURE"
-    assert result["action"] == "RETRY_WITH_CLEAN_INSTALL"
+    assert (
+        result["action"]
+        == "CLEAN_DEPENDENCY_ENV_AND_RETRY"
+    )
 
 
 def test_unknown_failure():
