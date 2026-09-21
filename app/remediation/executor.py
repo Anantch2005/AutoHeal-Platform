@@ -1,5 +1,9 @@
+import asyncio
+
 from app.remediation.dependency import DependencyRemediator
+from app.remediation.docker import DockerRemediator
 from app.remediation.jenkins import JenkinsRemediator
+from app.remediation.network import NetworkRemediator
 from app.remediation.workspace import WorkspaceRemediator
 
 
@@ -9,6 +13,8 @@ class RemediationExecutor:
         self.jenkins = JenkinsRemediator()
         self.workspace = WorkspaceRemediator()
         self.dependency = DependencyRemediator()
+        self.docker = DockerRemediator()
+        self.network = NetworkRemediator()
 
     async def execute(
         self,
@@ -27,14 +33,14 @@ class RemediationExecutor:
                 "action": "DO_NOT_HEAL",
                 "success": False,
                 "message": (
-                    "Code/application failure is not "
-                    "safe for automatic remediation."
+                    "Code/application failure is not safe "
+                    "for automatic remediation."
                 ),
             }
 
         # =========================================
         # FLAKY TEST
-        # RETRY + VERIFY
+        # CONTROLLED RETRY + VERIFY
         # =========================================
 
         if category == "FLAKY_TEST" and action == "RETRY":
@@ -49,11 +55,13 @@ class RemediationExecutor:
             return await self._retry_and_verify(
                 job_name=job_name,
                 reason="flaky test",
+                action="RETRY",
+                parameters=preparation["parameters"],
             )
 
         # =========================================
         # WORKSPACE FAILURE
-        # FRESH JENKINS EXECUTION
+        # CLEAN WORKSPACE + FRESH CHECKOUT + RETRY
         # =========================================
 
         if category == "WORKSPACE_FAILURE":
@@ -67,12 +75,16 @@ class RemediationExecutor:
 
             return await self._retry_and_verify(
                 job_name=job_name,
-                reason="workspace failure",
+                reason=(
+                    "workspace cleanup and fresh checkout"
+                ),
+                action=preparation["action"],
+                parameters=preparation["parameters"],
             )
 
         # =========================================
         # DEPENDENCY FAILURE
-        # FRESH DEPENDENCY INSTALL
+        # CLEAN ENV + CLEAN INSTALL + RETRY
         # =========================================
 
         if category == "DEPENDENCY_FAILURE":
@@ -86,40 +98,90 @@ class RemediationExecutor:
 
             return await self._retry_and_verify(
                 job_name=job_name,
-                reason="dependency failure",
-            )
-
-        # =========================================
-        # NETWORK FAILURE
-        # =========================================
-
-        if category == "NETWORK_FAILURE" and action == "RETRY":
-
-            return await self._retry_and_verify(
-                job_name=job_name,
-                reason="network failure",
+                reason=(
+                    "dependency environment reset "
+                    "and clean install"
+                ),
+                action=preparation["action"],
+                parameters=preparation["parameters"],
             )
 
         # =========================================
         # DOCKER FAILURE
+        # INVALIDATE CACHE + REBUILD + VERIFY
         # =========================================
 
-        if category == "DOCKER_FAILURE" and action == "RETRY":
+        if category == "DOCKER_FAILURE" and action in {
+            "RETRY",
+            "INVALIDATE_DOCKER_CACHE_AND_RETRY",
+        }:
+
+            preparation = await self.docker.remediate(
+                job_name
+            )
+
+            if not preparation["success"]:
+                return preparation
 
             return await self._retry_and_verify(
                 job_name=job_name,
-                reason="Docker failure",
+                reason=(
+                    "Docker cache invalidation "
+                    "and clean rebuild"
+                ),
+                action=preparation["action"],
+                parameters=preparation["parameters"],
+            )
+
+        # =========================================
+        # NETWORK FAILURE
+        # CONNECTIVITY CHECK + BACKOFF + RETRY
+        # =========================================
+
+        if category == "NETWORK_FAILURE" and action in {
+            "RETRY",
+            "CONNECTIVITY_CHECK_BACKOFF_AND_RETRY",
+        }:
+
+            preparation = await self.network.remediate(
+                job_name
+            )
+
+            if not preparation["success"]:
+                return preparation
+
+            return await self._retry_and_verify(
+                job_name=job_name,
+                reason=(
+                    "connectivity check "
+                    "and network backoff"
+                ),
+                action=preparation["action"],
+                parameters=preparation["parameters"],
+                backoff_seconds=preparation.get(
+                    "backoff_seconds",
+                    0,
+                ),
             )
 
         # =========================================
         # REGISTRY FAILURE
+        # CONTROLLED RETRY + VERIFY
         # =========================================
 
-        if category == "REGISTRY_FAILURE" and action == "RETRY":
+        if (
+            category == "REGISTRY_FAILURE"
+            and action == "RETRY"
+        ):
 
             return await self._retry_and_verify(
                 job_name=job_name,
                 reason="registry failure",
+                action="RETRY",
+                parameters={
+                    "AUTOHEAL_RETRY": "true",
+                    "AUTOHEAL_ACTION": "RETRY_REGISTRY",
+                },
             )
 
         # =========================================
@@ -143,6 +205,10 @@ class RemediationExecutor:
         return {
             "action": "RETRY",
             "success": True,
+            "parameters": {
+                "AUTOHEAL_RETRY": "true",
+                "AUTOHEAL_ACTION": "RETRY_FLAKY_TEST",
+            },
             "message": (
                 "Known flaky test detected. "
                 "A controlled Jenkins retry will be attempted."
@@ -153,15 +219,25 @@ class RemediationExecutor:
         self,
         job_name: str,
         reason: str,
+        action: str,
+        parameters: dict[str, str],
+        backoff_seconds: int = 0,
     ) -> dict:
+
+        if backoff_seconds > 0:
+
+            print(
+                "Applying remediation backoff: "
+                f"{backoff_seconds} seconds"
+            )
+
+            await asyncio.sleep(
+                backoff_seconds
+            )
 
         print(
             "Triggering Jenkins remediation build..."
         )
-
-        parameters = {
-            "AUTOHEAL_RETRY": "true",
-        }
 
         try:
 
@@ -176,7 +252,8 @@ class RemediationExecutor:
                 "action": "ESCALATE",
                 "success": False,
                 "message": (
-                    f"Failed to trigger Jenkins retry: {exc}"
+                    "Failed to trigger Jenkins "
+                    f"remediation build: {exc}"
                 ),
             }
 
@@ -197,13 +274,21 @@ class RemediationExecutor:
                 "success": False,
                 "message": trigger.get(
                     "message",
-                    "Failed to trigger Jenkins retry.",
+                    "Failed to trigger Jenkins "
+                    "remediation build.",
                 ),
-                "queue_url": trigger.get("queue_url"),
+                "queue_url": trigger.get(
+                    "queue_url"
+                ),
             }
 
-        new_build = trigger.get("build_number")
-        queue_url = trigger.get("queue_url")
+        new_build = trigger.get(
+            "build_number"
+        )
+
+        queue_url = trigger.get(
+            "queue_url"
+        )
 
         if new_build is None:
 
@@ -211,8 +296,9 @@ class RemediationExecutor:
                 "action": "ESCALATE",
                 "success": False,
                 "message": (
-                    "Jenkins accepted the retry, "
-                    "but no build number was returned."
+                    "Jenkins accepted the remediation "
+                    "request, but no build number "
+                    "was returned."
                 ),
                 "queue_url": queue_url,
             }
@@ -234,7 +320,7 @@ class RemediationExecutor:
                 "action": "ESCALATE",
                 "success": False,
                 "message": (
-                    f"Failed while verifying Jenkins "
+                    "Failed while verifying Jenkins "
                     f"build #{new_build}: {exc}"
                 ),
                 "new_build_number": new_build,
@@ -244,11 +330,12 @@ class RemediationExecutor:
         if result == "SUCCESS":
 
             return {
-                "action": "RETRY",
+                "action": action,
                 "success": True,
                 "message": (
-                    f"Retry completed successfully after "
-                    f"{reason}. Pipeline automatically healed."
+                    f"Remediation completed successfully "
+                    f"after {reason}. "
+                    "Pipeline automatically healed."
                 ),
                 "new_build_number": new_build,
                 "verification_result": "SUCCESS",
@@ -259,10 +346,12 @@ class RemediationExecutor:
             "action": "ESCALATE",
             "success": False,
             "message": (
-                f"Retry completed but the pipeline still "
-                f"failed after {reason}."
+                "Remediation completed but the pipeline "
+                f"still failed after {reason}."
             ),
             "new_build_number": new_build,
-            "verification_result": result or "UNKNOWN",
+            "verification_result": (
+                result or "UNKNOWN"
+            ),
             "queue_url": queue_url,
         }
