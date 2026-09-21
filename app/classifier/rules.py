@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-import re
+
 
 @dataclass
 class FailureRule:
@@ -15,7 +15,10 @@ FAILURE_RULES = [
     FailureRule(
         category="FLAKY_TEST",
         action="RETRY",
-        reason="The failure matches a known AutoHeal flaky-test scenario.",
+        reason=(
+            "The failure matches a known AutoHeal "
+            "flaky-test scenario."
+        ),
         patterns=[
             r"AUTOHEAL_FLAKY_TEST",
             r"FLAKY_TEST",
@@ -24,8 +27,11 @@ FAILURE_RULES = [
 
     FailureRule(
         category="WORKSPACE_FAILURE",
-        action="RETRY",
-        reason="A Jenkins workspace or filesystem failure was detected.",
+        action="CLEAN_WORKSPACE_AND_RETRY",
+        reason=(
+            "A Jenkins workspace or filesystem "
+            "failure was detected."
+        ),
         patterns=[
             r"Permission denied",
             r"unable to create file",
@@ -36,8 +42,11 @@ FAILURE_RULES = [
 
     FailureRule(
         category="DEPENDENCY_FAILURE",
-        action="RETRY_WITH_CLEAN_INSTALL",
-        reason="A dependency installation or package resolution failure was detected.",
+        action="CLEAN_DEPENDENCY_ENV_AND_RETRY",
+        reason=(
+            "A dependency installation or package "
+            "resolution failure was detected."
+        ),
         patterns=[
             r"Could not find a version that satisfies",
             r"No matching distribution found",
@@ -51,8 +60,11 @@ FAILURE_RULES = [
 
     FailureRule(
         category="NETWORK_FAILURE",
-        action="RETRY",
-        reason="A network or connection failure was detected.",
+        action="CONNECTIVITY_CHECK_BACKOFF_AND_RETRY",
+        reason=(
+            "A network or connection failure "
+            "was detected."
+        ),
         patterns=[
             r"Connection timed out",
             r"ConnectTimeout",
@@ -65,8 +77,11 @@ FAILURE_RULES = [
 
     FailureRule(
         category="DOCKER_FAILURE",
-        action="RETRY",
-        reason="A Docker build or container operation failure was detected.",
+        action="INVALIDATE_DOCKER_CACHE_AND_RETRY",
+        reason=(
+            "A Docker build or container operation "
+            "failure was detected."
+        ),
         patterns=[
             r"docker.*failed",
             r"Cannot connect to the Docker daemon",
@@ -79,7 +94,10 @@ FAILURE_RULES = [
     FailureRule(
         category="REGISTRY_FAILURE",
         action="RETRY",
-        reason="A container registry operation appears to have failed.",
+        reason=(
+            "A container registry operation "
+            "appears to have failed."
+        ),
         patterns=[
             r"unauthorized.*registry",
             r"pull.*failed",
@@ -93,7 +111,10 @@ FAILURE_RULES = [
     FailureRule(
         category="CODE_FAILURE",
         action="DO_NOT_HEAL",
-        reason="A test assertion or application code failure was detected.",
+        reason=(
+            "A test assertion or application "
+            "code failure was detected."
+        ),
         patterns=[
             r"AssertionError",
             r"assert .*==",

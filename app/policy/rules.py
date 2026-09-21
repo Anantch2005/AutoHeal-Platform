@@ -23,8 +23,8 @@ POLICY_RULES = {
         requires_approval=False,
         reason=(
             "Known transient test failure. "
-            "Up to three controlled remediation attempts are allowed "
-            "within the safety window; the circuit breaker stops repeats."
+            "Up to three controlled Jenkins retries "
+            "are allowed within the safety window."
         ),
     ),
 
@@ -32,12 +32,12 @@ POLICY_RULES = {
         category="NETWORK_FAILURE",
         risk_level="LOW",
         allowed=True,
-        action="RETRY",
+        action="CONNECTIVITY_CHECK_BACKOFF_AND_RETRY",
         max_attempts=3,
         requires_approval=False,
         reason=(
             "Transient network failure may recover "
-            "on a controlled retry."
+            "after a connectivity check and controlled backoff."
         ),
     ),
 
@@ -45,12 +45,13 @@ POLICY_RULES = {
         category="WORKSPACE_FAILURE",
         risk_level="MEDIUM",
         allowed=True,
-        action="RETRY",
+        action="CLEAN_WORKSPACE_AND_RETRY",
         max_attempts=3,
         requires_approval=False,
         reason=(
-            "Fresh Jenkins execution can provide a "
-            "clean workspace without modifying source code."
+            "Workspace failures can be safely recovered "
+            "by cleaning the workspace and performing "
+            "a fresh checkout."
         ),
     ),
 
@@ -58,12 +59,13 @@ POLICY_RULES = {
         category="DEPENDENCY_FAILURE",
         risk_level="MEDIUM",
         allowed=True,
-        action="RETRY_WITH_CLEAN_INSTALL",
+        action="CLEAN_DEPENDENCY_ENV_AND_RETRY",
         max_attempts=3,
         requires_approval=False,
         reason=(
-            "Up to three fresh dependency-install attempts are allowed "
-            "within the safety window; lockfiles are never modified."
+            "A fresh dependency installation attempt "
+            "is allowed without modifying lockfiles "
+            "or dependency versions."
         ),
     ),
 
@@ -71,12 +73,12 @@ POLICY_RULES = {
         category="DOCKER_FAILURE",
         risk_level="MEDIUM",
         allowed=True,
-        action="RETRY",
+        action="INVALIDATE_DOCKER_CACHE_AND_RETRY",
         max_attempts=3,
         requires_approval=False,
         reason=(
-            "Transient Docker execution failures may recover on "
-            "controlled retries within the safety window."
+            "Transient Docker execution failures may "
+            "recover after invalidating the build cache."
         ),
     ),
 
@@ -85,11 +87,11 @@ POLICY_RULES = {
         risk_level="MEDIUM",
         allowed=True,
         action="RETRY",
-        max_attempts=3,
+        max_attempts=1,
         requires_approval=False,
         reason=(
-            "Transient registry failures may recover on controlled "
-            "retries within the safety window."
+            "Transient registry failure may recover "
+            "on one controlled retry."
         ),
     ),
 
