@@ -37,6 +37,7 @@ FAILURE_RULES = [
             r"unable to create file",
             r"Could not checkout",
             r"Maximum checkout retry attempts reached",
+            r"workspace.*permission",
         ],
     ),
 
@@ -55,6 +56,7 @@ FAILURE_RULES = [
             r"package.*conflict",
             r"version.*conflict",
             r"failed to resolve dependencies",
+            r"dependency.*resolution.*failed",
         ],
     ),
 
@@ -72,6 +74,31 @@ FAILURE_RULES = [
             r"Temporary failure in name resolution",
             r"network is unreachable",
             r"Connection refused",
+            r"Failed to connect to .* port",
+            r"Could not resolve host",
+            r"Name or service not known",
+        ],
+    ),
+
+    # Registry MUST come before generic Docker rules.
+    FailureRule(
+        category="REGISTRY_FAILURE",
+        action="RETRY",
+        reason=(
+            "A container registry operation "
+            "appears to have failed."
+        ),
+        patterns=[
+            r"unauthorized.*registry",
+            r"unauthorized:.*",
+            r"requested access to the resource is denied",
+            r"denied:.*(?:push|pull)",
+            r"push.*failed",
+            r"failed to push",
+            r"pull.*failed",
+            r"manifest unknown",
+            r"registry.*timeout",
+            r"name unknown",
         ],
     ),
 
@@ -83,27 +110,12 @@ FAILURE_RULES = [
             "failure was detected."
         ),
         patterns=[
-            r"docker.*failed",
             r"Cannot connect to the Docker daemon",
             r"failed to solve",
             r"failed to build",
             r"docker build.*error",
-        ],
-    ),
-
-    FailureRule(
-        category="REGISTRY_FAILURE",
-        action="RETRY",
-        reason=(
-            "A container registry operation "
-            "appears to have failed."
-        ),
-        patterns=[
-            r"unauthorized.*registry",
-            r"pull.*failed",
-            r"push.*failed",
-            r"manifest unknown",
-            r"registry.*timeout",
+            r"docker build.*failed",
+            r"failed to create.*container",
         ],
     ),
 
