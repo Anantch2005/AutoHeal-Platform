@@ -15,6 +15,7 @@ client = TestClient(app)
 
 
 def make_fake_incident():
+
     classification = FailureClassification(
         category="FLAKY_TEST",
         action="RETRY",
@@ -69,16 +70,17 @@ def test_webhook_failure_endpoint(monkeypatch):
         },
     )
 
-    assert response.status_code == 200
+    assert response.status_code == 202
 
     data = response.json()
 
-    assert data["message"] == "Failure received"
+    assert (
+        data["message"]
+        == "Failure accepted for asynchronous processing."
+    )
+
     assert data["job"] == "prac"
     assert data["build"] == 100
-    assert data["classification"]["category"] == (
-        "FLAKY_TEST"
-    )
 
     fake_service.process_failure.assert_awaited_once_with(
         job_name="prac",
@@ -128,5 +130,6 @@ def test_webhook_ignores_non_failure_build():
     assert data["status"] == "SUCCESS"
 
     assert data["message"] == (
-        "Build is not a failure. No incident created."
+        "Build is not a failure. "
+        "No incident created."
     )

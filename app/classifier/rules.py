@@ -11,7 +11,10 @@ class FailureRule:
 
 FAILURE_RULES = [
 
-    # Most specific signatures FIRST.
+    # ================================================================
+    # FLAKY TEST
+    # ================================================================
+
     FailureRule(
         category="FLAKY_TEST",
         action="RETRY",
@@ -24,6 +27,10 @@ FAILURE_RULES = [
             r"FLAKY_TEST",
         ],
     ),
+
+    # ================================================================
+    # WORKSPACE
+    # ================================================================
 
     FailureRule(
         category="WORKSPACE_FAILURE",
@@ -40,6 +47,10 @@ FAILURE_RULES = [
             r"workspace.*permission",
         ],
     ),
+
+    # ================================================================
+    # DEPENDENCY
+    # ================================================================
 
     FailureRule(
         category="DEPENDENCY_FAILURE",
@@ -59,6 +70,10 @@ FAILURE_RULES = [
             r"dependency.*resolution.*failed",
         ],
     ),
+
+    # ================================================================
+    # NETWORK
+    # ================================================================
 
     FailureRule(
         category="NETWORK_FAILURE",
@@ -80,7 +95,13 @@ FAILURE_RULES = [
         ],
     ),
 
-    # Registry MUST come before generic Docker rules.
+    # ================================================================
+    # REGISTRY
+    #
+    # IMPORTANT:
+    # Registry comes BEFORE generic Docker rules.
+    # ================================================================
+
     FailureRule(
         category="REGISTRY_FAILURE",
         action="RETRY",
@@ -102,6 +123,10 @@ FAILURE_RULES = [
         ],
     ),
 
+    # ================================================================
+    # DOCKER
+    # ================================================================
+
     FailureRule(
         category="DOCKER_FAILURE",
         action="INVALIDATE_DOCKER_CACHE_AND_RETRY",
@@ -119,7 +144,10 @@ FAILURE_RULES = [
         ],
     ),
 
-    # Generic code signatures LAST.
+    # ================================================================
+    # CODE
+    # ================================================================
+
     FailureRule(
         category="CODE_FAILURE",
         action="DO_NOT_HEAL",
