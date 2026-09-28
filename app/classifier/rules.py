@@ -11,10 +11,6 @@ class FailureRule:
 
 FAILURE_RULES = [
 
-    # ================================================================
-    # FLAKY TEST
-    # ================================================================
-
     FailureRule(
         category="FLAKY_TEST",
         action="RETRY",
@@ -27,10 +23,6 @@ FAILURE_RULES = [
             r"FLAKY_TEST",
         ],
     ),
-
-    # ================================================================
-    # WORKSPACE
-    # ================================================================
 
     FailureRule(
         category="WORKSPACE_FAILURE",
@@ -47,10 +39,6 @@ FAILURE_RULES = [
             r"workspace.*permission",
         ],
     ),
-
-    # ================================================================
-    # DEPENDENCY
-    # ================================================================
 
     FailureRule(
         category="DEPENDENCY_FAILURE",
@@ -71,10 +59,6 @@ FAILURE_RULES = [
         ],
     ),
 
-    # ================================================================
-    # NETWORK
-    # ================================================================
-
     FailureRule(
         category="NETWORK_FAILURE",
         action="CONNECTIVITY_CHECK_BACKOFF_AND_RETRY",
@@ -94,13 +78,6 @@ FAILURE_RULES = [
             r"Name or service not known",
         ],
     ),
-
-    # ================================================================
-    # REGISTRY
-    #
-    # IMPORTANT:
-    # Registry comes BEFORE generic Docker rules.
-    # ================================================================
 
     FailureRule(
         category="REGISTRY_FAILURE",
@@ -123,10 +100,6 @@ FAILURE_RULES = [
         ],
     ),
 
-    # ================================================================
-    # DOCKER
-    # ================================================================
-
     FailureRule(
         category="DOCKER_FAILURE",
         action="INVALIDATE_DOCKER_CACHE_AND_RETRY",
@@ -143,10 +116,6 @@ FAILURE_RULES = [
             r"failed to create.*container",
         ],
     ),
-
-    # ================================================================
-    # CODE
-    # ================================================================
 
     FailureRule(
         category="CODE_FAILURE",
