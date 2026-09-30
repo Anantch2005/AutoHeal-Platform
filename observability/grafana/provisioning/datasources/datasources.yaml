@@ -4,24 +4,45 @@ apiVersion: 1
 datasources:
 
   - name: Prometheus
+    uid: prometheus
     type: prometheus
     access: proxy
     url: http://prometheus:9090
     isDefault: true
-
     editable: true
 
 
   - name: Tempo
+    uid: tempo
     type: tempo
     access: proxy
     url: http://tempo:3200
-
     editable: true
 
     jsonData:
+
       tracesToLogsV2:
         datasourceUid: prometheus
 
       serviceMap:
         datasourceUid: prometheus
+
+
+  - name: AutoHeal PostgreSQL
+    uid: autoheal-postgres
+    type: postgres
+    access: proxy
+
+    url: $__env{PG_HOST}:$__env{PG_PORT}
+
+    user: $__env{PG_USER}
+
+    editable: false
+
+    secureJsonData:
+      password: $__env{PG_PASSWORD}
+
+    jsonData:
+      database: $__env{PG_DATABASE}
+      sslmode: disable
+      timescaledb: false

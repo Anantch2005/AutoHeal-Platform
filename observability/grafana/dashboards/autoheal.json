@@ -3,6 +3,7 @@
     "list": []
   },
   "editable": true,
+  "graphTooltip": 0,
   "panels": [
     {
       "type": "stat",
@@ -12,6 +13,10 @@
         "w": 6,
         "x": 0,
         "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
       },
       "targets": [
         {
@@ -29,6 +34,10 @@
         "x": 6,
         "y": 0
       },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
         {
           "expr": "sum(autoheal_healed_total) or vector(0)",
@@ -45,6 +54,10 @@
         "x": 12,
         "y": 0
       },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
         {
           "expr": "sum(autoheal_escalated_total) or vector(0)",
@@ -54,80 +67,146 @@
     },
     {
       "type": "stat",
-      "title": "Policy Denials",
+      "title": "Healing Rate %",
       "gridPos": {
         "h": 4,
         "w": 6,
         "x": 18,
         "y": 0
       },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
         {
-          "expr": "sum(autoheal_policy_denials_total) or vector(0)",
-          "legendFormat": "Denied"
+          "expr": "100 * sum(autoheal_healed_total) / clamp_min(sum(autoheal_incidents_total), 1)",
+          "legendFormat": "Healing Rate"
         }
-      ]
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent"
+        },
+        "overrides": []
+      }
     },
     {
       "type": "timeseries",
-      "title": "Incidents",
+      "title": "Incident Rate",
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 0,
         "y": 4
       },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
         {
-          "expr": "sum(rate(autoheal_incidents_total[5m])) or vector(0)",
+          "expr": "sum(rate(autoheal_incidents_total[5m]))",
           "legendFormat": "Incidents/sec"
         }
       ]
     },
     {
       "type": "timeseries",
-      "title": "Remediation Success",
+      "title": "Remediation Success vs Failure",
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 12,
         "y": 4
       },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
         {
-          "expr": "sum(rate(autoheal_remediation_success_total[5m])) or vector(0)",
+          "expr": "sum(rate(autoheal_remediation_success_total[5m]))",
           "legendFormat": "Success"
         },
         {
-          "expr": "sum(rate(autoheal_remediation_failure_total[5m])) or vector(0)",
+          "expr": "sum(rate(autoheal_remediation_failure_total[5m]))",
           "legendFormat": "Failure"
         }
       ]
     },
     {
       "type": "timeseries",
-      "title": "AI Classifications",
+      "title": "AI Classifications by Category",
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 0,
         "y": 12
       },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
         {
-          "expr": "sum(rate(autoheal_ai_classifications_total[5m]))",
-          "legendFormat": "AI classifications/sec"
+          "expr": "sum by (category) (rate(autoheal_ai_classifications_total[5m]))",
+          "legendFormat": "{{category}}"
         }
       ]
     },
     {
       "type": "timeseries",
-      "title": "Incident Processing Duration",
+      "title": "Policy Denials by Category",
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 12,
         "y": 12
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (category) (rate(autoheal_policy_denials_total[5m]))",
+          "legendFormat": "{{category}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Remediation Attempts by Category",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 20
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (category) (rate(autoheal_remediation_attempts_total[5m]))",
+          "legendFormat": "{{category}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Incident Processing Duration (p95)",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 20
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
       },
       "targets": [
         {
@@ -135,10 +214,89 @@
           "legendFormat": "p95"
         }
       ]
+    },
+    {
+      "type": "table",
+      "title": "Recent AutoHeal Incidents",
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 28
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "autoheal-postgres"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT\n  i.created_at AS \"time\",\n  i.incident_id,\n  i.job_name,\n  i.build_number,\n  i.status,\n  i.failure_category AS category,\n  i.classifier_source AS source,\n  i.confidence,\n  COALESCE(ra.action, 'NONE') AS remediation_action,\n  ra.success AS remediation_success,\n  ra.retry_build_number,\n  ra.verification_result\nFROM incidents i\nLEFT JOIN LATERAL (\n  SELECT\n    action,\n    success,\n    retry_build_number,\n    verification_result\n  FROM remediation_attempts\n  WHERE remediation_attempts.incident_id = i.id\n  ORDER BY remediation_attempts.id DESC\n  LIMIT 1\n) ra ON TRUE\nWHERE $__timeFilter(i.created_at)\nORDER BY i.created_at DESC\nLIMIT 25;"
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "AI Output — Diagnosis & Reasoning",
+      "gridPos": {
+        "h": 11,
+        "w": 24,
+        "x": 0,
+        "y": 38
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "autoheal-postgres"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT\n  i.created_at AS \"time\",\n  i.incident_id,\n  i.job_name,\n  i.build_number,\n  i.failure_category AS category,\n  i.classifier_source AS source,\n  ROUND(i.confidence::numeric, 3) AS classifier_confidence,\n  ROUND(i.ai_confidence::numeric, 3) AS ai_confidence,\n  i.ai_root_cause,\n  i.ai_reasoning\nFROM incidents i\nWHERE $__timeFilter(i.created_at)\n  AND i.ai_root_cause IS NOT NULL\nORDER BY i.created_at DESC\nLIMIT 25;"
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "AutoHeal Audit Trail",
+      "gridPos": {
+        "h": 11,
+        "w": 24,
+        "x": 0,
+        "y": 49
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "autoheal-postgres"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT\n  a.created_at AS \"time\",\n  i.incident_id,\n  i.job_name,\n  i.build_number,\n  a.event_type,\n  a.message\nFROM audit_events a\nJOIN incidents i\n  ON i.id = a.incident_id\nWHERE $__timeFilter(a.created_at)\nORDER BY a.created_at DESC\nLIMIT 30;"
+        }
+      ]
     }
   ],
+  "refresh": "15s",
   "schemaVersion": 39,
-  "title": "AutoHeal Reliability Dashboard",
+  "style": "dark",
+  "tags": [
+    "autoheal",
+    "reliability",
+    "ai",
+    "ci-cd"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "timezone": "browser",
+  "title": "AutoHeal Reliability & AI Dashboard",
   "uid": "autoheal",
-  "version": 1
+  "version": 2
 }

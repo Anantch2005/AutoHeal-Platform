@@ -154,12 +154,22 @@ services:
     ports:
       - "127.0.0.1:3000:3000"
 
+    environment:
+      PG_HOST: postgres
+      PG_PORT: "5432"
+      PG_USER: ${POSTGRES_USER}
+      PG_PASSWORD: ${POSTGRES_PASSWORD}
+      PG_DATABASE: ${POSTGRES_DB}
+  
+
     volumes:
       - grafana_data:/var/lib/grafana
       - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
 
     depends_on:
+      postgres:
+        condition: service_healthy
       prometheus:
         condition: service_started
       tempo:
