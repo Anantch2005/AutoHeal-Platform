@@ -64,6 +64,175 @@ class IncidentService:
             },
         )
 
+    def _print_result_summary(
+        self,
+        incident: Incident,
+        classification: FailureClassification,
+        policy,
+        result: RemediationResult,
+        database_incident_id: int,
+    ) -> None:
+        """Print and persist a complete AutoHeal result summary."""
+
+        final_result = (
+            "HEALED"
+            if result.success
+            else "ESCALATED"
+        )
+
+        retry_build = (
+            f"#{result.new_build_number}"
+            if result.new_build_number is not None
+            else "None"
+        )
+
+        verification = (
+            result.verification_result
+            or "Not performed"
+        )
+
+        print()
+        print("=" * 72)
+        print("AUTOHEAL RESULT SUMMARY")
+        print("=" * 72)
+
+        print(
+            f"Incident ID       : "
+            f"{incident.incident_id}"
+        )
+
+        print(
+            f"Job               : "
+            f"{incident.job_name}"
+        )
+
+        print(
+            f"Failed Build      : "
+            f"#{incident.build_number}"
+        )
+
+        print(
+            f"Failure Category  : "
+            f"{classification.category}"
+        )
+
+        print(
+            f"Classifier Source : "
+            f"{classification.source}"
+        )
+
+        print(
+            f"Classifier Conf.  : "
+            f"{classification.confidence:.2f}"
+        )
+
+        print(
+            f"Policy Allowed    : "
+            f"{policy.allowed}"
+        )
+
+        print(
+            f"Policy Risk       : "
+            f"{policy.risk_level}"
+        )
+
+        print(
+            f"Policy Action     : "
+            f"{policy.action}"
+        )
+
+        print(
+            f"Remediation       : "
+            f"{result.action}"
+        )
+
+        print(
+            f"Retry Build       : "
+            f"{retry_build}"
+        )
+
+        print(
+            f"Verification      : "
+            f"{verification}"
+        )
+
+        # =========================================
+        # AI OUTPUT
+        # =========================================
+
+        if (
+            classification.source == "ai"
+            or classification.ai_root_cause
+            or classification.ai_reasoning
+            or classification.ai_confidence is not None
+        ):
+
+            print("-" * 72)
+            print("AI OUTPUT")
+            print("-" * 72)
+
+            print(
+                f"AI Root Cause     : "
+                f"{classification.ai_root_cause or 'None'}"
+            )
+
+            print(
+                f"AI Reasoning      : "
+                f"{classification.ai_reasoning or 'None'}"
+            )
+
+            print(
+                f"AI Confidence     : "
+                f"{classification.ai_confidence}"
+            )
+
+            if classification.ai_evidence:
+
+                print(
+                    "AI Evidence       : "
+                    + "; ".join(
+                        classification.ai_evidence
+                    )
+                )
+
+        print("-" * 72)
+
+        print(
+            f"Final Result      : "
+            f"{final_result}"
+        )
+
+        print("=" * 72)
+
+        # =========================================
+        # PERSIST FINAL RESULT
+        # =========================================
+        #
+        # This creates a single high-level audit event
+        # that Grafana and operators can use to understand
+        # the final outcome without reconstructing every
+        # previous event.
+        #
+        self.repository.add_audit_event(
+            incident_id=database_incident_id,
+            event_type="AUTOHEAL_RESULT",
+            message=(
+                f"category={classification.category}; "
+                f"classifier_source={classification.source}; "
+                f"classifier_confidence={classification.confidence}; "
+                f"policy_allowed={policy.allowed}; "
+                f"policy_risk={policy.risk_level}; "
+                f"policy_action={policy.action}; "
+                f"remediation={result.action}; "
+                f"retry_build={result.new_build_number}; "
+                f"verification={verification}; "
+                f"final_result={final_result}; "
+                f"ai_confidence={classification.ai_confidence}; "
+                f"ai_root_cause="
+                f"{classification.ai_root_cause or ''}"
+            ),
+        )
+
     async def process_failure(
         self,
         job_name: str,
@@ -261,8 +430,9 @@ class IncidentService:
                                     ai_result.category
                                 ),
 
-                                # AI never controls remediation.
-                                # Policy Engine decides that.
+                                # AI proposes a diagnosis.
+                                # Policy Engine decides whether
+                                # remediation is permitted.
                                 action="ESCALATE",
 
                                 reason=(
@@ -446,7 +616,9 @@ class IncidentService:
                         f"confidence="
                         f"{classification.confidence}; "
                         f"root_cause="
-                        f"{classification.ai_root_cause or ''}"
+                        f"{classification.ai_root_cause or ''}; "
+                        f"reasoning="
+                        f"{classification.ai_reasoning or ''}"
                     ),
                 )
 
@@ -661,6 +833,14 @@ class IncidentService:
                     message=policy.reason,
                 )
 
+                self._print_result_summary(
+                    incident=incident,
+                    classification=classification,
+                    policy=policy,
+                    result=incident.remediation,
+                    database_incident_id=database_incident_id,
+                )
+
                 print("-" * 60)
                 print("POLICY RESULT")
                 print("-" * 60)
@@ -780,6 +960,14 @@ class IncidentService:
                     message=message,
                 )
 
+                self._print_result_summary(
+                    incident=incident,
+                    classification=classification,
+                    policy=policy,
+                    result=incident.remediation,
+                    database_incident_id=database_incident_id,
+                )
+
                 print(
                     "Decision    : ESCALATE"
                 )
@@ -845,6 +1033,14 @@ class IncidentService:
                     incident_id=database_incident_id,
                     event_type="CIRCUIT_BREAKER_OPEN",
                     message=message,
+                )
+
+                self._print_result_summary(
+                    incident=incident,
+                    classification=classification,
+                    policy=policy,
+                    result=incident.remediation,
+                    database_incident_id=database_incident_id,
                 )
 
                 print(
@@ -1103,7 +1299,19 @@ class IncidentService:
                 )
 
             # =========================================
-            # 18. RESET CIRCUIT AFTER SUCCESS
+            # 18. AUTOHEAL RESULT SUMMARY
+            # =========================================
+
+            self._print_result_summary(
+                incident=incident,
+                classification=classification,
+                policy=policy,
+                result=incident.remediation,
+                database_incident_id=database_incident_id,
+            )
+
+            # =========================================
+            # 19. RESET CIRCUIT AFTER SUCCESS
             # =========================================
 
             if result["success"]:
