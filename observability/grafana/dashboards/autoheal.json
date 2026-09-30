@@ -6,6 +6,7 @@
   "graphTooltip": 0,
   "panels": [
     {
+      "id": 1,
       "type": "stat",
       "title": "Total Incidents",
       "gridPos": {
@@ -20,14 +21,15 @@
       },
       "targets": [
         {
-          "expr": "sum(autoheal_incidents_total) or vector(0)",
-          "legendFormat": "Incidents"
+          "refId": "A",
+          "expr": "sum(autoheal_incidents_total) or vector(0)"
         }
       ]
     },
     {
+      "id": 2,
       "type": "stat",
-      "title": "Healed",
+      "title": "Healed Incidents",
       "gridPos": {
         "h": 4,
         "w": 6,
@@ -40,14 +42,15 @@
       },
       "targets": [
         {
-          "expr": "sum(autoheal_healed_total) or vector(0)",
-          "legendFormat": "Healed"
+          "refId": "A",
+          "expr": "sum(autoheal_healed_total) or vector(0)"
         }
       ]
     },
     {
+      "id": 3,
       "type": "stat",
-      "title": "Escalated",
+      "title": "Escalated Incidents",
       "gridPos": {
         "h": 4,
         "w": 6,
@@ -60,14 +63,15 @@
       },
       "targets": [
         {
-          "expr": "sum(autoheal_escalated_total) or vector(0)",
-          "legendFormat": "Escalated"
+          "refId": "A",
+          "expr": "sum(autoheal_escalated_total) or vector(0)"
         }
       ]
     },
     {
+      "id": 4,
       "type": "stat",
-      "title": "Healing Rate %",
+      "title": "Healing Rate",
       "gridPos": {
         "h": 4,
         "w": 6,
@@ -80,20 +84,22 @@
       },
       "targets": [
         {
-          "expr": "100 * sum(autoheal_healed_total) / clamp_min(sum(autoheal_incidents_total), 1)",
-          "legendFormat": "Healing Rate"
+          "refId": "A",
+          "expr": "100 * sum(autoheal_healed_total) / clamp_min(sum(autoheal_incidents_total), 1)"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "percent"
+          "unit": "percent",
+          "decimals": 1
         },
         "overrides": []
       }
     },
     {
+      "id": 5,
       "type": "timeseries",
-      "title": "Incident Rate",
+      "title": "Incidents Over Time",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -106,12 +112,14 @@
       },
       "targets": [
         {
+          "refId": "A",
           "expr": "sum(rate(autoheal_incidents_total[5m]))",
           "legendFormat": "Incidents/sec"
         }
       ]
     },
     {
+      "id": 6,
       "type": "timeseries",
       "title": "Remediation Success vs Failure",
       "gridPos": {
@@ -126,18 +134,21 @@
       },
       "targets": [
         {
+          "refId": "A",
           "expr": "sum(rate(autoheal_remediation_success_total[5m]))",
           "legendFormat": "Success"
         },
         {
+          "refId": "B",
           "expr": "sum(rate(autoheal_remediation_failure_total[5m]))",
           "legendFormat": "Failure"
         }
       ]
     },
     {
+      "id": 7,
       "type": "timeseries",
-      "title": "AI Classifications by Category",
+      "title": "AI Classifications",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -150,14 +161,16 @@
       },
       "targets": [
         {
-          "expr": "sum by (category) (rate(autoheal_ai_classifications_total[5m]))",
-          "legendFormat": "{{category}}"
+          "refId": "A",
+          "expr": "sum(rate(autoheal_ai_classifications_total[5m]))",
+          "legendFormat": "AI classifications/sec"
         }
       ]
     },
     {
+      "id": 8,
       "type": "timeseries",
-      "title": "Policy Denials by Category",
+      "title": "Policy Denials",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -170,12 +183,14 @@
       },
       "targets": [
         {
-          "expr": "sum by (category) (rate(autoheal_policy_denials_total[5m]))",
-          "legendFormat": "{{category}}"
+          "refId": "A",
+          "expr": "sum(rate(autoheal_policy_denials_total[5m]))",
+          "legendFormat": "Denied/sec"
         }
       ]
     },
     {
+      "id": 9,
       "type": "timeseries",
       "title": "Remediation Attempts by Category",
       "gridPos": {
@@ -190,14 +205,16 @@
       },
       "targets": [
         {
+          "refId": "A",
           "expr": "sum by (category) (rate(autoheal_remediation_attempts_total[5m]))",
           "legendFormat": "{{category}}"
         }
       ]
     },
     {
+      "id": 10,
       "type": "timeseries",
-      "title": "Incident Processing Duration (p95)",
+      "title": "Processing Duration p95",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -210,12 +227,20 @@
       },
       "targets": [
         {
+          "refId": "A",
           "expr": "histogram_quantile(0.95, sum(rate(autoheal_processing_duration_seconds_bucket[5m])) by (le))",
           "legendFormat": "p95"
         }
-      ]
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
     },
     {
+      "id": 11,
       "type": "table",
       "title": "Recent AutoHeal Incidents",
       "gridPos": {
@@ -232,11 +257,12 @@
         {
           "refId": "A",
           "format": "table",
-          "rawSql": "SELECT\n  i.created_at AS \"time\",\n  i.incident_id,\n  i.job_name,\n  i.build_number,\n  i.status,\n  i.failure_category AS category,\n  i.classifier_source AS source,\n  i.confidence,\n  COALESCE(ra.action, 'NONE') AS remediation_action,\n  ra.success AS remediation_success,\n  ra.retry_build_number,\n  ra.verification_result\nFROM incidents i\nLEFT JOIN LATERAL (\n  SELECT\n    action,\n    success,\n    retry_build_number,\n    verification_result\n  FROM remediation_attempts\n  WHERE remediation_attempts.incident_id = i.id\n  ORDER BY remediation_attempts.id DESC\n  LIMIT 1\n) ra ON TRUE\nWHERE $__timeFilter(i.created_at)\nORDER BY i.created_at DESC\nLIMIT 25;"
+          "rawSql": "SELECT\n  i.created_at AS \"time\",\n  i.incident_id,\n  i.job_name,\n  i.build_number,\n  i.status,\n  i.failure_category AS category,\n  i.failure_action AS classifier_action,\n  i.classifier_source,\n  ROUND(i.confidence::numeric, 3) AS confidence,\n  COALESCE(r.action, 'NONE') AS remediation_action,\n  r.success AS remediation_success,\n  r.retry_build_number,\n  r.verification_result\nFROM incidents i\nLEFT JOIN LATERAL (\n  SELECT\n    action,\n    success,\n    retry_build_number,\n    verification_result\n  FROM remediation_attempts\n  WHERE remediation_attempts.incident_id = i.id\n  ORDER BY remediation_attempts.id DESC\n  LIMIT 1\n) r ON TRUE\nWHERE $__timeFilter(i.created_at)\nORDER BY i.created_at DESC\nLIMIT 25;"
         }
       ]
     },
     {
+      "id": 12,
       "type": "table",
       "title": "AI Output — Diagnosis & Reasoning",
       "gridPos": {
@@ -258,8 +284,9 @@
       ]
     },
     {
+      "id": 13,
       "type": "table",
-      "title": "AutoHeal Audit Trail",
+      "title": "AutoHeal Result Summary",
       "gridPos": {
         "h": 11,
         "w": 24,
@@ -274,7 +301,29 @@
         {
           "refId": "A",
           "format": "table",
-          "rawSql": "SELECT\n  a.created_at AS \"time\",\n  i.incident_id,\n  i.job_name,\n  i.build_number,\n  a.event_type,\n  a.message\nFROM audit_events a\nJOIN incidents i\n  ON i.id = a.incident_id\nWHERE $__timeFilter(a.created_at)\nORDER BY a.created_at DESC\nLIMIT 30;"
+          "rawSql": "SELECT\n  a.created_at AS \"time\",\n  i.incident_id,\n  i.job_name,\n  i.build_number,\n  i.failure_category AS category,\n  a.event_type,\n  a.message\nFROM audit_events a\nJOIN incidents i\n  ON i.id = a.incident_id\nWHERE $__timeFilter(a.created_at)\n  AND a.event_type IN ('AUTOHEAL_RESULT', 'REMEDIATION_SUCCEEDED', 'REMEDIATION_FAILED', 'POLICY_DENIED', 'ESCALATED')\nORDER BY a.created_at DESC\nLIMIT 30;"
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "type": "table",
+      "title": "AutoHeal Audit Trail",
+      "gridPos": {
+        "h": 11,
+        "w": 24,
+        "x": 0,
+        "y": 60
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "autoheal-postgres"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT\n  a.created_at AS \"time\",\n  i.incident_id,\n  i.job_name,\n  i.build_number,\n  a.event_type,\n  a.message\nFROM audit_events a\nJOIN incidents i\n  ON i.id = a.incident_id\nWHERE $__timeFilter(a.created_at)\nORDER BY a.created_at DESC\nLIMIT 40;"
         }
       ]
     }
