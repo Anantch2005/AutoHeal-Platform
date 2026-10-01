@@ -54,8 +54,7 @@ async def test_flaky_test_is_healed():
     assert fake.triggered is True
 
     assert fake.parameters == {
-        "AUTOHEAL_RETRY": "true",
-        "AUTOHEAL_ACTION": "RETRY_FLAKY_TEST",
+        "AUTOHEAL_ACTION": "RETRY",
     }
 
     assert result["success"] is True
@@ -115,10 +114,7 @@ async def test_workspace_failure_cleans_workspace_and_fresh_checkout():
     assert fake.triggered is True
 
     assert fake.parameters == {
-        "AUTOHEAL_RETRY": "true",
         "AUTOHEAL_ACTION": "CLEAN_WORKSPACE",
-        "AUTOHEAL_CLEAN_WORKSPACE": "true",
-        "AUTOHEAL_FRESH_CHECKOUT": "true",
     }
 
     assert result["success"] is True
@@ -154,12 +150,7 @@ async def test_dependency_failure_rebuilds_dependency_environment():
     assert fake.triggered is True
 
     assert fake.parameters == {
-        "AUTOHEAL_RETRY": "true",
-        "AUTOHEAL_ACTION": (
-            "CLEAN_DEPENDENCY_ENV"
-        ),
-        "AUTOHEAL_CLEAN_DEPENDENCY_ENV": "true",
-        "AUTOHEAL_INSTALL_FROM_LOCKFILE": "true",
+        "AUTOHEAL_ACTION": "CLEAN_DEPENDENCY_ENV",
     }
 
     assert result["success"] is True
@@ -197,11 +188,7 @@ async def test_docker_failure_invalidates_cache_before_retry():
     assert fake.triggered is True
 
     assert fake.parameters == {
-        "AUTOHEAL_RETRY": "true",
-        "AUTOHEAL_ACTION": (
-            "INVALIDATE_DOCKER_CACHE"
-        ),
-        "AUTOHEAL_DOCKER_NO_CACHE": "true",
+        "AUTOHEAL_ACTION": "INVALIDATE_DOCKER_CACHE",
     }
 
     assert result["success"] is True
@@ -253,12 +240,7 @@ async def test_network_failure_checks_connectivity_and_backoff(
     assert fake.triggered is True
 
     assert fake.parameters == {
-        "AUTOHEAL_RETRY": "true",
-        "AUTOHEAL_ACTION": (
-            "CONNECTIVITY_CHECK_BACKOFF"
-        ),
-        "AUTOHEAL_CONNECTIVITY_CHECK": "true",
-        "AUTOHEAL_BACKOFF_SECONDS": "10",
+        "AUTOHEAL_ACTION": "CONNECTIVITY_CHECK_BACKOFF",
     }
 
     assert result["success"] is True

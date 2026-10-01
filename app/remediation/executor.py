@@ -61,7 +61,6 @@ class RemediationExecutor:
 
         # =========================================
         # WORKSPACE FAILURE
-        # CLEAN WORKSPACE + FRESH CHECKOUT + RETRY
         # =========================================
 
         if category == "WORKSPACE_FAILURE":
@@ -84,7 +83,6 @@ class RemediationExecutor:
 
         # =========================================
         # DEPENDENCY FAILURE
-        # CLEAN ENV + CLEAN INSTALL + RETRY
         # =========================================
 
         if category == "DEPENDENCY_FAILURE":
@@ -108,7 +106,6 @@ class RemediationExecutor:
 
         # =========================================
         # DOCKER FAILURE
-        # INVALIDATE CACHE + REBUILD + VERIFY
         # =========================================
 
         if category == "DOCKER_FAILURE" and action in {
@@ -135,7 +132,6 @@ class RemediationExecutor:
 
         # =========================================
         # NETWORK FAILURE
-        # CONNECTIVITY CHECK + BACKOFF + RETRY
         # =========================================
 
         if category == "NETWORK_FAILURE" and action in {
@@ -166,7 +162,6 @@ class RemediationExecutor:
 
         # =========================================
         # REGISTRY FAILURE
-        # CONTROLLED RETRY + VERIFY
         # =========================================
 
         if (
@@ -179,7 +174,6 @@ class RemediationExecutor:
                 reason="registry failure",
                 action="RETRY",
                 parameters={
-                    "AUTOHEAL_RETRY": "true",
                     "AUTOHEAL_ACTION": "RETRY_REGISTRY",
                 },
             )
@@ -206,8 +200,7 @@ class RemediationExecutor:
             "action": "RETRY",
             "success": True,
             "parameters": {
-                "AUTOHEAL_RETRY": "true",
-                "AUTOHEAL_ACTION": "RETRY_FLAKY_TEST",
+                "AUTOHEAL_ACTION": "RETRY",
             },
             "message": (
                 "Known flaky test detected. "
