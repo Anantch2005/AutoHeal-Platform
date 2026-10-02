@@ -1,78 +1,101 @@
 import pytest
 
-from app.remediation.dependency import DependencyRemediator
-from app.remediation.docker import DockerRemediator
-from app.remediation.network import NetworkRemediator
-from app.remediation.workspace import WorkspaceRemediator
+from app.remediation.dependency import (
+    DependencyRemediator,
+)
 
+from app.remediation.docker import (
+    DockerRemediator,
+)
 
-async def _get(remediator):
-    return await remediator.remediate("prac")
+from app.remediation.network import (
+    NetworkRemediator,
+)
+
+from app.remediation.workspace import (
+    WorkspaceRemediator,
+)
 
 
 @pytest.mark.asyncio
-async def test_workspace_plan_is_explicit():
+async def test_workspace_plan():
 
-    plan = await _get(
+    result = await (
         WorkspaceRemediator()
+        .remediate("prac")
     )
 
+    assert result["success"] is True
+
     assert (
-        plan["action"]
+        result["action"]
         == "CLEAN_WORKSPACE_AND_RETRY"
     )
 
-    assert plan["parameters"] == {
-        "AUTOHEAL_ACTION": "CLEAN_WORKSPACE",
+    assert result["parameters"] == {
+        "AUTOHEAL_ACTION":
+            "CLEAN_WORKSPACE",
     }
 
 
 @pytest.mark.asyncio
-async def test_dependency_plan_is_explicit():
+async def test_dependency_plan():
 
-    plan = await _get(
+    result = await (
         DependencyRemediator()
+        .remediate("prac")
     )
 
+    assert result["success"] is True
+
     assert (
-        plan["action"]
+        result["action"]
         == "CLEAN_DEPENDENCY_ENV_AND_RETRY"
     )
 
-    assert plan["parameters"] == {
-        "AUTOHEAL_ACTION": "CLEAN_DEPENDENCY_ENV",
+    assert result["parameters"] == {
+        "AUTOHEAL_ACTION":
+            "CLEAN_DEPENDENCY_ENV",
     }
 
 
 @pytest.mark.asyncio
-async def test_docker_plan_is_explicit():
+async def test_docker_plan():
 
-    plan = await _get(
+    result = await (
         DockerRemediator()
+        .remediate("prac")
     )
 
+    assert result["success"] is True
+
     assert (
-        plan["action"]
+        result["action"]
         == "INVALIDATE_DOCKER_CACHE_AND_RETRY"
     )
 
-    assert plan["parameters"] == {
-        "AUTOHEAL_ACTION": "INVALIDATE_DOCKER_CACHE",
+    assert result["parameters"] == {
+        "AUTOHEAL_ACTION":
+            "INVALIDATE_DOCKER_CACHE",
     }
 
 
 @pytest.mark.asyncio
-async def test_network_plan_is_explicit():
+async def test_network_plan():
 
-    plan = await _get(
+    result = await (
         NetworkRemediator()
+        .remediate("prac")
     )
 
+    assert result["success"] is True
+
     assert (
-        plan["action"]
+        result["action"]
         == "CONNECTIVITY_CHECK_BACKOFF_AND_RETRY"
     )
 
-    assert plan["parameters"] == {
-        "AUTOHEAL_ACTION": "CONNECTIVITY_CHECK_BACKOFF",
+    assert result["parameters"] == {
+        "AUTOHEAL_ACTION":
+            "CONNECTIVITY_CHECK_BACKOFF",
     }

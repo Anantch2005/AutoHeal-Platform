@@ -1,67 +1,74 @@
 import groovy.json.JsonOutput
 
 /**
- * AutoHeal Jenkins integration.
+ * AutoHeal Jenkins Shared Library
  *
- * Normal build:
- *   autoheal() is a no-op.
+ * This library contains ONLY AutoHeal integration logic.
  *
- * Failed build:
- *   autoheal() in post { failure { ... } } sends the
- *   failed build to the AutoHeal backend.
+ * It does not provide generic CI/CD helpers such as:
+ * python_test()
+ * docker_build()
+ * docker_push()
+ * trivy_scan()
+ * sonarqube_analysis()
  *
- * Retry build:
- *   AutoHeal supplies AUTOHEAL_ACTION as an internal
- *   Jenkins parameter. This step applies the requested
- *   Jenkins-side preparation and prevents recursive webhooks.
+ * Those remain in the separate generic "Shared" library.
  *
- * AutoHeal Shared Library intentionally contains only
- * AutoHeal integration logic.
+ * Responsibilities:
+ *
+ * 1. Send failed normal builds to AutoHeal.
+ * 2. Detect AutoHeal retry builds.
+ * 3. Expose AUTOHEAL_ACTION to the consumer pipeline.
+ * 4. Perform only generic agent-level actions that are safe
+ *    and independent of application tooling.
  */
 
 def call(Map config = [:]) {
 
-    String action = (
-        env.AUTOHEAL_ACTION ?: ''
-    ).trim()
+    String action =
+        (env.AUTOHEAL_ACTION ?: '').trim()
 
 
-    // =========================================================
-    // FAILED BUILD
-    // =========================================================
+    /*
+     * =====================================================
+     * RETRY BUILD
+     * =====================================================
+     *
+     * AutoHeal triggered this Jenkins build.
+     *
+     * Do not send another failure webhook.
+     */
 
-    if (currentBuild.currentResult == 'FAILURE') {
+    if (action) {
 
-        /*
-         * Retry builds already belong to an AutoHeal incident.
-         * Do not create a second incident for the retry build.
-         */
-        if (action) {
+        env.AUTOHEAL_RETRY = 'true'
 
-            echo(
-                'AutoHeal: retry build failed; '
-                + 'backend will handle verification and escalation.'
-            )
+        echo """
+========================================
+          AutoHeal Retry
+========================================
+ Action : ${action}
+========================================
+"""
 
-            return
-        }
-
-
-        notifyAutoHeal(config)
+        applyAction(action)
 
         return
     }
 
 
-    // =========================================================
-    // NORMAL BUILD
-    // =========================================================
+    /*
+     * =====================================================
+     * NORMAL BUILD
+     * =====================================================
+     */
 
-    if (!action) {
+    if (
+        currentBuild.currentResult != 'FAILURE'
+    ) {
 
         echo(
-            'AutoHeal: normal build; '
-            + 'no recovery action requested.'
+            'AutoHeal: normal build; no action required.'
         )
 
         return
@@ -69,19 +76,28 @@ def call(Map config = [:]) {
 
 
     /*
-     * Internal environment flag used by the consumer
-     * pipeline/test logic. This is NOT a user-facing
-     * AutoHeal configuration parameter.
+     * =====================================================
+     * FAILED NORMAL BUILD
+     * =====================================================
+     *
+     * Send the build event to AutoHeal backend.
      */
-    env.AUTOHEAL_RETRY = 'true'
+
+    sendFailureWebhook(config)
+}
 
 
-    // =========================================================
-    // AUTOHEAL ACTIONS
-    // =========================================================
+/**
+ * Apply the generic part of the AutoHeal action.
+ *
+ * Application/tool-specific actions remain inside the
+ * consumer test pipeline.
+ */
+private void applyAction(
+    String action
+) {
 
     switch (action) {
-
 
         case 'RETRY':
 
@@ -95,8 +111,7 @@ def call(Map config = [:]) {
         case 'CLEAN_WORKSPACE':
 
             echo(
-                'AutoHeal: cleaning workspace '
-                + 'before checkout.'
+                'AutoHeal: cleaning Jenkins workspace.'
             )
 
             deleteDir()
@@ -108,12 +123,12 @@ def call(Map config = [:]) {
 
             echo(
                 'AutoHeal: dependency environment '
-                + 'recovery requested.'
+                + 'reset requested.'
             )
 
             /*
-             * The generic python_test() shared-library step
-             * performs the actual dependency environment reset.
+             * The Calculator demo pipeline performs
+             * the actual environment recreation.
              */
 
             break
@@ -127,8 +142,8 @@ def call(Map config = [:]) {
             )
 
             /*
-             * The generic docker_build() shared-library step
-             * performs the actual no-cache rebuild.
+             * The Calculator demo pipeline performs
+             * the actual --no-cache build.
              */
 
             break
@@ -137,30 +152,28 @@ def call(Map config = [:]) {
         case 'CONNECTIVITY_CHECK_BACKOFF':
 
             echo(
-                'AutoHeal: checking Jenkins agent '
-                + 'connectivity before retry.'
+                'AutoHeal: checking network connectivity.'
             )
 
             sh '''
                 set -eu
 
-                command -v curl >/dev/null 2>&1
+                if command -v curl >/dev/null 2>&1; then
 
-                curl \
-                    --fail \
-                    --silent \
-                    --show-error \
-                    --max-time 10 \
-                    https://github.com \
-                    >/dev/null
+                    curl \
+                        --fail \
+                        --silent \
+                        --show-error \
+                        --max-time 10 \
+                        https://github.com \
+                        >/dev/null
 
-                curl \
-                    --fail \
-                    --silent \
-                    --show-error \
-                    --max-time 10 \
-                    https://registry-1.docker.io/v2/ \
-                    >/dev/null || true
+                else
+
+                    echo \
+                        "curl not available; skipping connectivity check."
+
+                fi
             '''
 
             break
@@ -173,8 +186,8 @@ def call(Map config = [:]) {
             )
 
             /*
-             * The existing docker_push() step performs
-             * the retry using the configured Jenkins credentials.
+             * Registry authentication/push remains the
+             * responsibility of the consumer pipeline.
              */
 
             break
@@ -190,9 +203,9 @@ def call(Map config = [:]) {
 
 
 /**
- * Send a failed normal build to AutoHeal.
+ * Send failed build event to AutoHeal backend.
  */
-private void notifyAutoHeal(
+private void sendFailureWebhook(
     Map config = [:]
 ) {
 
@@ -211,10 +224,22 @@ private void notifyAutoHeal(
 
     String payload = JsonOutput.toJson([
         job_name     : env.JOB_NAME,
-        build_number : (env.BUILD_NUMBER ?: '0') as Integer,
+        build_number : (
+            env.BUILD_NUMBER ?: '0'
+        ) as Integer,
         build_url    : env.BUILD_URL ?: '',
         status       : 'FAILURE'
     ])
+
+
+    echo """
+========================================
+        AutoHeal Failure Event
+========================================
+ Job   : ${env.JOB_NAME}
+ Build : ${env.BUILD_NUMBER}
+========================================
+"""
 
 
     withCredentials([
@@ -260,11 +285,10 @@ private void notifyAutoHeal(
 
                         ;;
 
-
                     *)
 
                         echo \
-                            "AutoHeal webhook failed with HTTP ${status_code}."
+                            "AutoHeal webhook failed (HTTP ${status_code})."
 
                         cat "$response_file" || true
 

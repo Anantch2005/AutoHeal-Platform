@@ -1,20 +1,11 @@
 @Library('AutoHeal') _
 
 /*
- * Minimal AutoHeal integration.
+ * Minimal AutoHeal integration example.
  *
- * The consumer pipeline only needs:
+ * AutoHeal Shared Library contains ONLY autoheal().
  *
- *     autoheal()
- *
- * before checkout/setup, and:
- *
- *     autoheal()
- *
- * in post { failure { ... } }.
- *
- * AutoHeal itself decides classification,
- * policy and remediation action.
+ * Generic CI/CD steps belong to the separate Shared library.
  */
 
 pipeline {
@@ -35,19 +26,14 @@ pipeline {
     parameters {
 
         /*
-         * Internal routing parameter.
-         *
-         * AutoHeal supplies this when it triggers
-         * a remediation build.
-         *
-         * Normal users leave it empty.
+         * Internal parameter used only when AutoHeal
+         * triggers a retry build.
          */
-
         string(
             name: 'AUTOHEAL_ACTION',
             defaultValue: '',
             description: (
-                'Internal AutoHeal routing value. '
+                'Internal AutoHeal action. '
                 + 'Leave empty for normal builds.'
             )
         )
@@ -56,20 +42,11 @@ pipeline {
 
     stages {
 
-
         stage('Checkout') {
 
             steps {
 
                 script {
-
-                    /*
-                     * Normal build:
-                     *     no-op
-                     *
-                     * Retry:
-                     *     execute requested preparation
-                     */
 
                     autoheal()
 
@@ -79,12 +56,12 @@ pipeline {
         }
 
 
-        stage('Application Pipeline') {
+        stage('Build') {
 
             steps {
 
                 echo(
-                    'Run the normal project pipeline here.'
+                    'Normal application pipeline.'
                 )
             }
         }
