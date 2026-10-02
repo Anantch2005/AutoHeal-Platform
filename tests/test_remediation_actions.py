@@ -25,14 +25,18 @@ async def test_workspace_plan():
         .remediate("prac")
     )
 
+
     assert result["success"] is True
+
 
     assert (
         result["action"]
         == "CLEAN_WORKSPACE_AND_RETRY"
     )
 
+
     assert result["parameters"] == {
+
         "AUTOHEAL_ACTION":
             "CLEAN_WORKSPACE",
     }
@@ -46,14 +50,18 @@ async def test_dependency_plan():
         .remediate("prac")
     )
 
+
     assert result["success"] is True
+
 
     assert (
         result["action"]
         == "CLEAN_DEPENDENCY_ENV_AND_RETRY"
     )
 
+
     assert result["parameters"] == {
+
         "AUTOHEAL_ACTION":
             "CLEAN_DEPENDENCY_ENV",
     }
@@ -67,14 +75,18 @@ async def test_docker_plan():
         .remediate("prac")
     )
 
+
     assert result["success"] is True
+
 
     assert (
         result["action"]
         == "INVALIDATE_DOCKER_CACHE_AND_RETRY"
     )
 
+
     assert result["parameters"] == {
+
         "AUTOHEAL_ACTION":
             "INVALIDATE_DOCKER_CACHE",
     }
@@ -88,14 +100,18 @@ async def test_network_plan():
         .remediate("prac")
     )
 
+
     assert result["success"] is True
+
 
     assert (
         result["action"]
         == "CONNECTIVITY_CHECK_BACKOFF_AND_RETRY"
     )
 
+
     assert result["parameters"] == {
+
         "AUTOHEAL_ACTION":
             "CONNECTIVITY_CHECK_BACKOFF",
     }

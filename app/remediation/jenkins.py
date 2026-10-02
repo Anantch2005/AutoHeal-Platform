@@ -27,9 +27,9 @@ class JenkinsRemediator:
         """
         Trigger a Jenkins build.
 
-        AutoHeal passes the single internal
-        AUTOHEAL_ACTION parameter when a targeted
-        remediation is required.
+        When a remediation is required, AutoHeal sends
+        the internal AUTOHEAL_ACTION parameter to the
+        consumer pipeline.
         """
 
         if parameters:
@@ -69,8 +69,7 @@ class JenkinsRemediator:
             if not queue_url:
 
                 raise RuntimeError(
-                    "Jenkins did not return "
-                    "a queue URL."
+                    "Jenkins did not return a queue URL."
                 )
 
 
@@ -83,11 +82,15 @@ class JenkinsRemediator:
 
         return {
             "success": True,
-            "message": (
-                "Jenkins build triggered."
-            ),
-            "build_number": build_number,
-            "queue_url": queue_url,
+
+            "message":
+                "Jenkins remediation build triggered.",
+
+            "build_number":
+                build_number,
+
+            "queue_url":
+                queue_url,
         }
 
 
@@ -126,13 +129,12 @@ class JenkinsRemediator:
                 if data.get("cancelled"):
 
                     raise RuntimeError(
-                        "Jenkins queue item "
-                        "was cancelled."
+                        "Jenkins queue item was cancelled."
                     )
 
 
-                executable = data.get(
-                    "executable"
+                executable = (
+                    data.get("executable")
                 )
 
 
@@ -149,8 +151,7 @@ class JenkinsRemediator:
 
 
         raise TimeoutError(
-            "Timed out waiting for Jenkins "
-            "queue item."
+            "Timed out waiting for Jenkins queue item."
         )
 
 
@@ -161,8 +162,8 @@ class JenkinsRemediator:
         timeout: int = 600,
     ) -> str:
         """
-        Wait for the Jenkins retry build to finish
-        and return its final result.
+        Wait for the Jenkins remediation build to
+        finish and return its final result.
         """
 
         url = (
