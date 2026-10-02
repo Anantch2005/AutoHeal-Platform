@@ -10,11 +10,17 @@ from app.remediation.workspace import WorkspaceRemediator
 class RemediationExecutor:
 
     def __init__(self):
+
         self.jenkins = JenkinsRemediator()
+
         self.workspace = WorkspaceRemediator()
+
         self.dependency = DependencyRemediator()
+
         self.docker = DockerRemediator()
+
         self.network = NetworkRemediator()
+
 
     async def execute(
         self,
@@ -23,12 +29,13 @@ class RemediationExecutor:
         action: str,
     ) -> dict:
 
-        # =========================================
-        # CODE FAILURE
-        # NEVER AUTO-HEAL
-        # =========================================
+
+        # =====================================================
+        # UNSAFE FAILURE
+        # =====================================================
 
         if action == "DO_NOT_HEAL":
+
             return {
                 "action": "DO_NOT_HEAL",
                 "success": False,
@@ -38,61 +45,88 @@ class RemediationExecutor:
                 ),
             }
 
-        # =========================================
+
+        # =====================================================
         # FLAKY TEST
-        # CONTROLLED RETRY + VERIFY
-        # =========================================
+        # =====================================================
 
-        if category == "FLAKY_TEST" and action == "RETRY":
+        if (
+            category == "FLAKY_TEST"
+            and action == "RETRY"
+        ):
 
-            preparation = await self._prepare_flaky_test(
-                job_name
+            preparation = (
+                await self._prepare_flaky_test(
+                    job_name
+                )
             )
 
             if not preparation["success"]:
                 return preparation
+
 
             return await self._retry_and_verify(
                 job_name=job_name,
                 reason="flaky test",
                 action="RETRY",
-                parameters=preparation["parameters"],
+                parameters=preparation[
+                    "parameters"
+                ],
             )
 
-        # =========================================
-        # WORKSPACE FAILURE
-        # =========================================
 
-        if category == "WORKSPACE_FAILURE":
+        # =====================================================
+        # WORKSPACE
+        # =====================================================
 
-            preparation = await self.workspace.remediate(
-                job_name
+        if (
+            category == "WORKSPACE_FAILURE"
+            and action
+            == "CLEAN_WORKSPACE_AND_RETRY"
+        ):
+
+            preparation = (
+                await self.workspace.remediate(
+                    job_name
+                )
             )
 
             if not preparation["success"]:
                 return preparation
+
 
             return await self._retry_and_verify(
                 job_name=job_name,
                 reason=(
-                    "workspace cleanup and fresh checkout"
+                    "workspace cleanup "
+                    "and fresh checkout"
                 ),
                 action=preparation["action"],
-                parameters=preparation["parameters"],
+                parameters=preparation[
+                    "parameters"
+                ],
             )
 
-        # =========================================
-        # DEPENDENCY FAILURE
-        # =========================================
 
-        if category == "DEPENDENCY_FAILURE":
+        # =====================================================
+        # DEPENDENCY
+        # =====================================================
 
-            preparation = await self.dependency.remediate(
-                job_name
+        if (
+            category == "DEPENDENCY_FAILURE"
+            and action
+            == "CLEAN_DEPENDENCY_ENV_AND_RETRY"
+        ):
+
+            preparation = (
+                await self.dependency.remediate(
+                    job_name
+                )
             )
 
             if not preparation["success"]:
                 return preparation
+
 
             return await self._retry_and_verify(
                 job_name=job_name,
@@ -101,24 +135,31 @@ class RemediationExecutor:
                     "and clean install"
                 ),
                 action=preparation["action"],
-                parameters=preparation["parameters"],
+                parameters=preparation[
+                    "parameters"
+                ],
             )
 
-        # =========================================
-        # DOCKER FAILURE
-        # =========================================
 
-        if category == "DOCKER_FAILURE" and action in {
-            "RETRY",
-            "INVALIDATE_DOCKER_CACHE_AND_RETRY",
-        }:
+        # =====================================================
+        # DOCKER
+        # =====================================================
 
-            preparation = await self.docker.remediate(
-                job_name
+        if (
+            category == "DOCKER_FAILURE"
+            and action
+            == "INVALIDATE_DOCKER_CACHE_AND_RETRY"
+        ):
+
+            preparation = (
+                await self.docker.remediate(
+                    job_name
+                )
             )
 
             if not preparation["success"]:
                 return preparation
+
 
             return await self._retry_and_verify(
                 job_name=job_name,
@@ -127,24 +168,31 @@ class RemediationExecutor:
                     "and clean rebuild"
                 ),
                 action=preparation["action"],
-                parameters=preparation["parameters"],
+                parameters=preparation[
+                    "parameters"
+                ],
             )
 
-        # =========================================
-        # NETWORK FAILURE
-        # =========================================
 
-        if category == "NETWORK_FAILURE" and action in {
-            "RETRY",
-            "CONNECTIVITY_CHECK_BACKOFF_AND_RETRY",
-        }:
+        # =====================================================
+        # NETWORK
+        # =====================================================
 
-            preparation = await self.network.remediate(
-                job_name
+        if (
+            category == "NETWORK_FAILURE"
+            and action
+            == "CONNECTIVITY_CHECK_BACKOFF_AND_RETRY"
+        ):
+
+            preparation = (
+                await self.network.remediate(
+                    job_name
+                )
             )
 
             if not preparation["success"]:
                 return preparation
+
 
             return await self._retry_and_verify(
                 job_name=job_name,
@@ -153,16 +201,19 @@ class RemediationExecutor:
                     "and network backoff"
                 ),
                 action=preparation["action"],
-                parameters=preparation["parameters"],
+                parameters=preparation[
+                    "parameters"
+                ],
                 backoff_seconds=preparation.get(
                     "backoff_seconds",
                     0,
                 ),
             )
 
-        # =========================================
-        # REGISTRY FAILURE
-        # =========================================
+
+        # =====================================================
+        # REGISTRY
+        # =====================================================
 
         if (
             category == "REGISTRY_FAILURE"
@@ -174,22 +225,25 @@ class RemediationExecutor:
                 reason="registry failure",
                 action="RETRY",
                 parameters={
-                    "AUTOHEAL_ACTION": "RETRY_REGISTRY",
+                    "AUTOHEAL_ACTION":
+                        "RETRY_REGISTRY",
                 },
             )
 
-        # =========================================
-        # EVERYTHING ELSE
-        # =========================================
+
+        # =====================================================
+        # UNSUPPORTED
+        # =====================================================
 
         return {
             "action": "ESCALATE",
             "success": False,
             "message": (
-                f"No safe remediation exists for "
-                f"{category}."
+                f"No safe remediation exists "
+                f"for {category}."
             ),
         }
+
 
     async def _prepare_flaky_test(
         self,
@@ -204,9 +258,11 @@ class RemediationExecutor:
             },
             "message": (
                 "Known flaky test detected. "
-                "A controlled Jenkins retry will be attempted."
+                "A controlled Jenkins retry "
+                "will be attempted."
             ),
         }
+
 
     async def _retry_and_verify(
         self,
@@ -216,6 +272,7 @@ class RemediationExecutor:
         parameters: dict[str, str],
         backoff_seconds: int = 0,
     ) -> dict:
+
 
         if backoff_seconds > 0:
 
@@ -228,15 +285,19 @@ class RemediationExecutor:
                 backoff_seconds
             )
 
+
         print(
             "Triggering Jenkins remediation build..."
         )
 
+
         try:
 
-            trigger = await self.jenkins.trigger_build(
-                job_name,
-                parameters=parameters,
+            trigger = (
+                await self.jenkins.trigger_build(
+                    job_name,
+                    parameters=parameters,
+                )
             )
 
         except Exception as exc:
@@ -246,34 +307,47 @@ class RemediationExecutor:
                 "success": False,
                 "message": (
                     "Failed to trigger Jenkins "
-                    f"remediation build: {exc}"
+                    "remediation build: "
+                    f"{exc}"
                 ),
             }
 
-        if not isinstance(trigger, dict):
+
+        if not isinstance(
+            trigger,
+            dict,
+        ):
 
             return {
                 "action": "ESCALATE",
                 "success": False,
                 "message": (
-                    "Unexpected response from Jenkins trigger."
+                    "Unexpected response from "
+                    "Jenkins trigger."
                 ),
             }
 
-        if not trigger.get("success", False):
+
+        if not trigger.get(
+            "success",
+            False,
+        ):
 
             return {
                 "action": "ESCALATE",
                 "success": False,
                 "message": trigger.get(
                     "message",
-                    "Failed to trigger Jenkins "
-                    "remediation build.",
+                    (
+                        "Failed to trigger Jenkins "
+                        "remediation build."
+                    ),
                 ),
                 "queue_url": trigger.get(
                     "queue_url"
                 ),
             }
+
 
         new_build = trigger.get(
             "build_number"
@@ -282,6 +356,7 @@ class RemediationExecutor:
         queue_url = trigger.get(
             "queue_url"
         )
+
 
         if new_build is None:
 
@@ -296,15 +371,19 @@ class RemediationExecutor:
                 "queue_url": queue_url,
             }
 
+
         print(
             f"New Jenkins build: #{new_build}"
         )
 
+
         try:
 
-            result = await self.jenkins.get_build_result(
-                job_name,
-                new_build,
+            result = (
+                await self.jenkins.get_build_result(
+                    job_name,
+                    new_build,
+                )
             )
 
         except Exception as exc:
@@ -320,13 +399,14 @@ class RemediationExecutor:
                 "queue_url": queue_url,
             }
 
+
         if result == "SUCCESS":
 
             return {
                 "action": action,
                 "success": True,
                 "message": (
-                    f"Remediation completed successfully "
+                    "Remediation completed successfully "
                     f"after {reason}. "
                     "Pipeline automatically healed."
                 ),
@@ -334,6 +414,7 @@ class RemediationExecutor:
                 "verification_result": "SUCCESS",
                 "queue_url": queue_url,
             }
+
 
         return {
             "action": "ESCALATE",

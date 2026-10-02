@@ -1,17 +1,23 @@
+import secrets
+
 from fastapi import (
     APIRouter,
     BackgroundTasks,
     Header,
     HTTPException,
 )
+
 from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.models import JenkinsWebhookEvent
-from app.services.incident_service import IncidentService
+from app.services.incident_service import (
+    IncidentService,
+)
 
 
 router = APIRouter()
+
 
 incident_service = IncidentService()
 
@@ -45,12 +51,21 @@ async def jenkins_webhook(
     ),
 ):
 
-    if x_autoheal_secret != settings.webhook_secret:
+    provided_secret = (
+        x_autoheal_secret or ""
+    )
+
+
+    if not secrets.compare_digest(
+        provided_secret,
+        settings.webhook_secret,
+    ):
 
         raise HTTPException(
             status_code=401,
             detail="Invalid webhook secret",
         )
+
 
     if event.status.upper() != "FAILURE":
 
@@ -64,11 +79,13 @@ async def jenkins_webhook(
             "status": event.status,
         }
 
+
     background_tasks.add_task(
         _process_failure,
         event.job_name,
         event.build_number,
     )
+
 
     return JSONResponse(
         status_code=202,
