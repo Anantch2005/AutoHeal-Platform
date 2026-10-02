@@ -72,14 +72,13 @@ private void notifyAutoHeal(Map config = [:]) {
         ?: 'autoheal-webhook-secret'
 
 
-    def payload = """
-{
-  "job_name": "${env.JOB_NAME}",
-  "build_number": ${env.BUILD_NUMBER},
-  "build_url": "${env.BUILD_URL ?: ''}",
-  "status": "FAILURE"
-}
-"""
+
+def payload = JsonOutput.toJson({
+   job_name      : env.JOB_NAME,
+   build_number  : env.BUILD_NUMBER as Integer,
+   build_url     : env.BUILD_URL ?: '',
+   status        : 'FAILURE'
+})
 
 
     withCredentials([
