@@ -8,11 +8,16 @@ from app.config import settings
 class JenkinsRemediator:
 
     def __init__(self):
-        self.base_url = settings.jenkins_url.rstrip("/")
+
+        self.base_url = (
+            settings.jenkins_url.rstrip("/")
+        )
+
         self.auth = (
             settings.jenkins_username,
             settings.jenkins_api_token,
         )
+
 
     async def trigger_build(
         self,
@@ -22,21 +27,25 @@ class JenkinsRemediator:
         """
         Trigger a Jenkins build.
 
-        If parameters are provided, use
-        /buildWithParameters so AutoHeal can pass
-        AUTOHEAL_RETRY=true.
+        AutoHeal passes the single internal
+        AUTOHEAL_ACTION parameter when a targeted
+        remediation is required.
         """
 
         if parameters:
+
             url = (
                 f"{self.base_url}/job/"
                 f"{job_name}/buildWithParameters"
             )
+
         else:
+
             url = (
                 f"{self.base_url}/job/"
                 f"{job_name}/build"
             )
+
 
         async with httpx.AsyncClient() as client:
 
@@ -49,27 +58,38 @@ class JenkinsRemediator:
 
             response.raise_for_status()
 
-            queue_url = response.headers.get(
-                "Location"
+
+            queue_url = (
+                response.headers.get(
+                    "Location"
+                )
             )
 
+
             if not queue_url:
+
                 raise RuntimeError(
-                    "Jenkins did not return a queue URL."
+                    "Jenkins did not return "
+                    "a queue URL."
                 )
 
-        # Wait until Jenkins assigns the real
-        # build number.
-        build_number = await self.wait_for_queue(
-            queue_url
+
+        build_number = (
+            await self.wait_for_queue(
+                queue_url
+            )
         )
+
 
         return {
             "success": True,
-            "message": "Jenkins build triggered.",
+            "message": (
+                "Jenkins build triggered."
+            ),
             "build_number": build_number,
             "queue_url": queue_url,
         }
+
 
     async def wait_for_queue(
         self,
@@ -82,7 +102,9 @@ class JenkinsRemediator:
             + "/api/json"
         )
 
+
         elapsed = 0
+
 
         async with httpx.AsyncClient() as client:
 
@@ -94,29 +116,43 @@ class JenkinsRemediator:
                     timeout=20,
                 )
 
+
                 response.raise_for_status()
+
 
                 data = response.json()
 
+
                 if data.get("cancelled"):
+
                     raise RuntimeError(
-                        "Jenkins queue item was cancelled."
+                        "Jenkins queue item "
+                        "was cancelled."
                     )
+
 
                 executable = data.get(
                     "executable"
                 )
 
+
                 if executable:
-                    return executable["number"]
+
+                    return executable[
+                        "number"
+                    ]
+
 
                 await asyncio.sleep(2)
+
                 elapsed += 2
+
 
         raise TimeoutError(
             "Timed out waiting for Jenkins "
             "queue item."
         )
+
 
     async def get_build_result(
         self,
@@ -125,8 +161,8 @@ class JenkinsRemediator:
         timeout: int = 600,
     ) -> str:
         """
-        Wait for the Jenkins build to finish and
-        return its final result.
+        Wait for the Jenkins retry build to finish
+        and return its final result.
         """
 
         url = (
@@ -134,7 +170,9 @@ class JenkinsRemediator:
             f"{job_name}/{build_number}/api/json"
         )
 
+
         elapsed = 0
+
 
         async with httpx.AsyncClient() as client:
 
@@ -146,21 +184,28 @@ class JenkinsRemediator:
                     timeout=20,
                 )
 
+
                 response.raise_for_status()
 
+
                 data = response.json()
+
 
                 if not data.get(
                     "building",
                     False,
                 ):
+
                     return data.get(
                         "result",
                         "UNKNOWN",
                     )
 
+
                 await asyncio.sleep(5)
+
                 elapsed += 5
+
 
         raise TimeoutError(
             f"Build #{build_number} did not "

@@ -1,47 +1,102 @@
-/*
- * AutoHeal Jenkins Shared Library integration
- *
- * Consumer contract:
- *   1. Define one internal AUTOHEAL_ACTION parameter.
- *   2. Call autoheal() before SCM checkout.
- *   3. Call autoheal() from post/failure.
- *
- * The pipeline does NOT need to know failure categories or define
- * remediation flags. AutoHeal decides the action; the shared library
- * executes it on the Jenkins agent.
- */
-
 @Library('AutoHeal') _
+
+/*
+ * Minimal AutoHeal integration.
+ *
+ * The consumer pipeline only needs:
+ *
+ *     autoheal()
+ *
+ * before checkout/setup, and:
+ *
+ *     autoheal()
+ *
+ * in post { failure { ... } }.
+ *
+ * AutoHeal itself decides classification,
+ * policy and remediation action.
+ */
 
 pipeline {
 
     agent any
 
+
     options {
-        skipDefaultCheckout(true)
+
+        skipDefaultCheckout(
+            true
+        )
+
+        timestamps()
     }
+
+
+    parameters {
+
+        /*
+         * Internal routing parameter.
+         *
+         * AutoHeal supplies this when it triggers
+         * a remediation build.
+         *
+         * Normal users leave it empty.
+         */
+
+        string(
+            name: 'AUTOHEAL_ACTION',
+            defaultValue: '',
+            description: (
+                'Internal AutoHeal routing value. '
+                + 'Leave empty for normal builds.'
+            )
+        )
+    }
+
 
     stages {
 
+
         stage('Checkout') {
+
             steps {
+
                 script {
+
+                    /*
+                     * Normal build:
+                     *     no-op
+                     *
+                     * Retry:
+                     *     execute requested preparation
+                     */
+
                     autoheal()
+
                     checkout scm
                 }
             }
         }
 
-        stage('Build') {
+
+        stage('Application Pipeline') {
+
             steps {
-                echo 'Normal application pipeline'
+
+                echo(
+                    'Run the normal project pipeline here.'
+                )
             }
         }
     }
 
+
     post {
+
         failure {
+
             script {
+
                 autoheal()
             }
         }
