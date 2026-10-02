@@ -5,85 +5,53 @@ import groovy.json.JsonOutput
  *
  * This library contains ONLY AutoHeal integration logic.
  *
- * Generic CI/CD steps such as:
+ * Generic CI/CD functions remain in the separate Shared library.
  *
- *   python_test()
- *   docker_build()
- *   docker_push()
- *   trivy_scan()
- *   sonarqube_analysis()
- *
- * remain in the separate generic Shared library.
- *
- * AutoHeal responsibilities:
+ * Responsibilities:
  *
  *   1. Detect AutoHeal retry builds.
- *   2. Apply generic AutoHeal actions that belong to Jenkins.
- *   3. Send failed normal builds to the AutoHeal backend.
- *   4. Prevent retry builds from recursively creating incidents.
+ *   2. Apply AutoHeal-specific Jenkins actions.
+ *   3. Send failed normal builds to AutoHeal backend.
+ *   4. Prevent recursive webhook creation during retries.
  */
 
 
 def call(Map config = [:]) {
 
-    /*
-     * AutoHeal passes exactly one internal parameter:
-     *
-     *     AUTOHEAL_ACTION
-     *
-     * Empty = normal build.
-     * Non-empty = AutoHeal retry build.
-     */
-
     String action =
         (env.AUTOHEAL_ACTION ?: '').trim()
 
 
-    // =========================================================
-    // AUTOHEAL RETRY BUILD
-    // =========================================================
-
-    if (action) {
-
-        /*
-         * This build was triggered by AutoHeal.
-         *
-         * Set an internal environment flag which the
-         * consuming pipeline/tests can use to avoid
-         * re-triggering demo failures.
-         */
-
-        env.AUTOHEAL_RETRY = 'true'
-
-
-        echo """
-========================================
-          AutoHeal Retry Build
-========================================
- Action : ${action}
- Build  : ${env.BUILD_NUMBER}
-========================================
-"""
-
-
-        applyAutoHealAction(action)
-
-        return
-    }
-
-
-    // =========================================================
-    // NORMAL BUILD
-    // =========================================================
-
     /*
-     * Calling autoheal() during normal successful pipeline
-     * execution is intentionally a no-op.
+     * =========================================================
+     * NORMAL BUILD
+     * =========================================================
+     *
+     * "NONE" is treated exactly like an empty action.
+     *
+     * This is important because Jenkins may retain a previous
+     * parameter value or the demo job may explicitly use NONE.
      */
 
     if (
-        currentBuild.currentResult != 'FAILURE'
+        !action ||
+        action == 'NONE'
     ) {
+
+        /*
+         * If the current build is already failing, this is a
+         * normal failed build and must be reported to AutoHeal.
+         */
+
+        if (
+            currentBuild.currentResult == 'FAILURE'
+        ) {
+
+            sendFailureWebhook(config)
+
+            return
+        }
+
 
         echo(
             'AutoHeal: normal build; no recovery action.'
@@ -93,26 +61,39 @@ def call(Map config = [:]) {
     }
 
 
-    // =========================================================
-    // NORMAL BUILD FAILURE
-    // =========================================================
-
     /*
-     * Only a normal failed build creates a new AutoHeal
-     * incident.
+     * =========================================================
+     * AUTOHEAL RETRY BUILD
+     * =========================================================
+     *
+     * Any real AutoHeal action means this build was triggered
+     * by the AutoHeal backend.
      */
 
-    sendFailureWebhook(config)
+    env.AUTOHEAL_RETRY = 'true'
+
+
+    echo """
+========================================
+          AutoHeal Retry Build
+========================================
+ Action : ${action}
+ Build  : ${env.BUILD_NUMBER}
+========================================
+"""
+
+
+    applyAutoHealAction(
+        action
+    )
 }
 
 
 /**
- * Execute AutoHeal actions that belong to the Jenkins
- * integration itself.
+ * Execute the Jenkins-side portion of an AutoHeal action.
  *
- * Application/tool-specific work remains in the consumer
- * pipeline. This keeps the AutoHeal library dedicated to
- * AutoHeal rather than becoming a generic CI/CD library.
+ * Generic CI/CD functionality remains in the consumer pipeline
+ * and in the separate universal Shared library.
  */
 private void applyAutoHealAction(
     String action
@@ -135,7 +116,25 @@ private void applyAutoHealAction(
 
 
         // =====================================================
-        // WORKSPACE RECOVERY
+        // FLAKY TEST
+        // =====================================================
+
+        case 'RETRY_FLAKY_TEST':
+
+            echo(
+                'AutoHeal: flaky test retry requested.'
+            )
+
+            /*
+             * No destructive Jenkins-side operation is required.
+             * The pipeline simply reruns the normal test stages.
+             */
+
+            break
+
+
+        // =====================================================
+        // WORKSPACE
         // =====================================================
 
         case 'CLEAN_WORKSPACE':
@@ -154,61 +153,58 @@ private void applyAutoHealAction(
 
 
         // =====================================================
-        // DEPENDENCY RECOVERY
+        // DEPENDENCY
         // =====================================================
 
         case 'CLEAN_DEPENDENCY_ENV':
 
             echo(
-                'AutoHeal: dependency environment '
-                + 'cleanup requested.'
+                'AutoHeal: dependency environment cleanup requested.'
             )
 
             /*
-             * The consuming application pipeline performs
-             * the actual dependency environment recreation.
+             * The Calculator demo pipeline performs the actual
+             * Python environment recreation.
              */
 
             break
 
 
         // =====================================================
-        // DOCKER RECOVERY
+        // DOCKER
         // =====================================================
 
         case 'INVALIDATE_DOCKER_CACHE':
 
             echo(
-                'AutoHeal: Docker cache invalidation '
-                + 'requested.'
+                'AutoHeal: Docker cache invalidation requested.'
             )
 
             /*
-             * The consuming application pipeline performs
-             * the Docker --no-cache rebuild.
+             * The Calculator demo pipeline performs the actual
+             * docker build --no-cache operation.
              */
 
             break
 
 
         // =====================================================
-        // NETWORK RECOVERY
+        // NETWORK
         // =====================================================
 
         case 'CONNECTIVITY_CHECK_BACKOFF':
 
             echo(
-                'AutoHeal: checking Jenkins agent '
-                + 'connectivity.'
+                'AutoHeal: checking Jenkins agent connectivity.'
             )
 
 
             sh '''
                 set -eu
 
-                if command -v curl >/dev/null 2>&1; then
+                echo "Checking GitHub connectivity..."
 
-                    echo "Checking GitHub connectivity..."
+                if command -v curl >/dev/null 2>&1; then
 
                     curl \
                         --fail \
@@ -218,12 +214,12 @@ private void applyAutoHealAction(
                         https://github.com \
                         >/dev/null
 
-                    echo "GitHub connectivity check passed."
+                    echo "Connectivity check passed."
 
                 else
 
-                    echo \
-                        "curl is not available; skipping connectivity check."
+                    echo "curl is not available."
+                    echo "Skipping connectivity check."
 
                 fi
             '''
@@ -232,7 +228,56 @@ private void applyAutoHealAction(
 
 
         // =====================================================
-        // REGISTRY RECOVERY
+        // COMBINED NETWORK ACTION
+        // =====================================================
+
+        case 'CONNECTIVITY_CHECK_BACKOFF_AND_RETRY':
+
+            echo(
+                'AutoHeal: network recovery requested.'
+            )
+
+
+            /*
+             * The backend normally converts this into the
+             * single Jenkins parameter:
+             *
+             *     CONNECTIVITY_CHECK_BACKOFF
+             *
+             * This case is kept for compatibility with an
+             * older/manual invocation.
+             */
+
+            sh '''
+                set -eu
+
+                echo "Checking GitHub connectivity..."
+
+                if command -v curl >/dev/null 2>&1; then
+
+                    curl \
+                        --fail \
+                        --silent \
+                        --show-error \
+                        --max-time 10 \
+                        https://github.com \
+                        >/dev/null
+
+                    echo "Connectivity check passed."
+
+                else
+
+                    echo "curl is not available."
+                    echo "Skipping connectivity check."
+
+                fi
+            '''
+
+            break
+
+
+        // =====================================================
+        // REGISTRY
         // =====================================================
 
         case 'RETRY_REGISTRY':
@@ -242,8 +287,8 @@ private void applyAutoHealAction(
             )
 
             /*
-             * The consuming application pipeline performs
-             * the actual authenticated registry push.
+             * Actual authenticated docker push remains in the
+             * consumer pipeline.
              */
 
             break
@@ -263,7 +308,7 @@ private void applyAutoHealAction(
 
 
 /**
- * Send a normal failed Jenkins build to the AutoHeal backend.
+ * Send a normal failed Jenkins build to AutoHeal.
  */
 private void sendFailureWebhook(
     Map config = [:]
@@ -374,7 +419,6 @@ private void sendFailureWebhook(
                             "AutoHeal webhook accepted."
 
                         ;;
-
 
                     *)
 
