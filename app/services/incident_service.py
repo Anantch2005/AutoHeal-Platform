@@ -1,6 +1,5 @@
 import time
 import uuid
-
 from app.ai.classifier import AIClassifier
 from app.classifier.classifier import FailureClassifier
 from app.collectors.jenkins import JenkinsCollector
@@ -26,33 +25,23 @@ from app.observability.telemetry import (
 from app.policy.engine import PolicyEngine
 from app.remediation.executor import RemediationExecutor
 from app.safety.circuit_breaker import CircuitBreaker
-
-
 class IncidentService:
-
     def __init__(self):
         self.jenkins = JenkinsCollector()
         self.classifier = FailureClassifier()
-
-        # AI diagnostic engine.
-        # Ollama analyzes every failure when enabled.
+        # Local Ollama diagnostic assistant.
         self.ai_classifier = AIClassifier()
-
-        # Policy engine remains authoritative for remediation.
+        # Policy Engine remains authoritative.
         self.policy = PolicyEngine()
-
         # Remediation engine.
         self.remediation = RemediationExecutor()
-
         # Safety protection.
         self.circuit_breaker = CircuitBreaker(
             max_attempts=3,
             window_minutes=30,
         )
-
         # PostgreSQL persistence.
         self.repository = IncidentRepository()
-
     def _record_processing_duration(
         self,
         start_time: float,
@@ -64,7 +53,31 @@ class IncidentService:
                 "job_name": job_name,
             },
         )
-
+    def _format_ai_reasoning(
+        self,
+        ai_result,
+    ) -> str:
+        """
+        Combine Ollama's reasoning and recommendations into the
+        existing ai_reasoning database field.
+        No database migration is required.
+        """
+        parts = [
+            ai_result.reasoning.strip()
+        ]
+        if ai_result.recommendations:
+            parts.append(
+                "Recommended checks:\n"
+                + "\n".join(
+                    f"- {item}"
+                    for item in ai_result.recommendations
+                )
+            )
+        return "\n\n".join(
+            part
+            for part in parts
+            if part
+        )
     def _print_result_summary(
         self,
         incident: Incident,
@@ -73,119 +86,102 @@ class IncidentService:
         result: RemediationResult,
         database_incident_id: int,
     ) -> None:
-        """Print and persist a complete AutoHeal result summary."""
-
+        """
+        Print and persist a complete AutoHeal result summary.
+        """
         final_result = (
             "HEALED"
             if result.success
             else "ESCALATED"
         )
-
         retry_build = (
             f"#{result.new_build_number}"
             if result.new_build_number is not None
             else "None"
         )
-
         verification = (
             result.verification_result
             or "Not performed"
         )
-
         print()
         print("=" * 72)
         print("AUTOHEAL RESULT SUMMARY")
         print("=" * 72)
-
         print(
             f"Incident ID       : "
             f"{incident.incident_id}"
         )
-
         print(
             f"Job               : "
             f"{incident.job_name}"
         )
-
         print(
             f"Failed Build      : "
             f"#{incident.build_number}"
         )
-
         print(
             f"Failure Category  : "
             f"{classification.category}"
         )
-
         print(
             f"Classifier Source : "
             f"{classification.source}"
         )
-
         print(
             f"Classifier Conf.  : "
             f"{classification.confidence:.2f}"
         )
-
         print(
             f"Policy Allowed    : "
             f"{policy.allowed}"
         )
-
         print(
             f"Policy Risk       : "
             f"{policy.risk_level}"
         )
-
         print(
             f"Policy Action     : "
             f"{policy.action}"
         )
-
         print(
             f"Remediation       : "
             f"{result.action}"
         )
-
         print(
             f"Retry Build       : "
             f"{retry_build}"
         )
-
         print(
             f"Verification      : "
             f"{verification}"
         )
-
         # =========================================
         # AI OUTPUT
         # =========================================
-
         if (
-            classification.source == "ai"
-            or classification.ai_root_cause
+            classification.ai_root_cause
             or classification.ai_reasoning
             or classification.ai_confidence is not None
         ):
             print("-" * 72)
-            print("AI OUTPUT")
+            print("AI DIAGNOSTIC OUTPUT")
             print("-" * 72)
-
+            print(
+                f"AI Category       : "
+                f"{getattr(classification, 'ai_category', None) or 'None'}"
+            )
             print(
                 f"AI Root Cause     : "
                 f"{classification.ai_root_cause or 'None'}"
             )
-
-            print(
-                f"AI Reasoning      : "
-                f"{classification.ai_reasoning or 'None'}"
-            )
-
             print(
                 f"AI Confidence     : "
                 f"{classification.ai_confidence}"
             )
-
+            print(
+                f"AI Reasoning      : "
+                f"{classification.ai_reasoning or 'None'}"
+            )
             if classification.ai_evidence:
                 print(
                     "AI Evidence       : "
@@ -193,28 +189,22 @@ class IncidentService:
                         classification.ai_evidence
                     )
                 )
-
         print("-" * 72)
-
         print(
             f"Final Result      : "
             f"{final_result}"
         )
-
         print("=" * 72)
-
         # =========================================
         # PERSIST FINAL RESULT
         # =========================================
-
         self.repository.add_audit_event(
             incident_id=database_incident_id,
             event_type="AUTOHEAL_RESULT",
             message=(
                 f"category={classification.category}; "
                 f"classifier_source={classification.source}; "
-                f"classifier_confidence="
-                f"{classification.confidence}; "
+                f"classifier_confidence={classification.confidence}; "
                 f"policy_allowed={policy.allowed}; "
                 f"policy_risk={policy.risk_level}; "
                 f"policy_action={policy.action}; "
@@ -222,25 +212,20 @@ class IncidentService:
                 f"retry_build={result.new_build_number}; "
                 f"verification={verification}; "
                 f"final_result={final_result}; "
-                f"ai_confidence="
-                f"{classification.ai_confidence}; "
+                f"ai_confidence={classification.ai_confidence}; "
                 f"ai_root_cause="
                 f"{classification.ai_root_cause or ''}"
             ),
         )
-
     async def process_failure(
         self,
         job_name: str,
         build_number: int,
     ) -> Incident | None:
-
         start_time = time.perf_counter()
-
         # =========================================
         # OBSERVABILITY — INCIDENT RECEIVED
         # =========================================
-
         incidents_total.add(
             1,
             {
@@ -248,417 +233,269 @@ class IncidentService:
                 "job_name": job_name,
             },
         )
-
         with tracer.start_as_current_span(
             "autoheal.process_failure"
         ) as root_span:
-
             root_span.set_attribute(
                 "service.name",
                 "autoheal",
             )
-
             root_span.set_attribute(
                 "jenkins.job.name",
                 job_name,
             )
-
             root_span.set_attribute(
                 "jenkins.build.number",
                 build_number,
             )
-
             # =========================================
             # 1. PERSISTENT DUPLICATE PROTECTION
             # =========================================
-
             with tracer.start_as_current_span(
                 "autoheal.duplicate_check"
             ):
-
                 if self.repository.exists(
                     job_name,
                     build_number,
                 ):
-
                     root_span.set_attribute(
                         "incident.duplicate",
                         True,
                     )
-
                     print(
                         f"Duplicate incident ignored: "
                         f"{job_name} #{build_number}"
                     )
-
                     self._record_processing_duration(
                         start_time,
                         job_name,
                     )
-
                     return None
-
             # =========================================
             # 2. COLLECT EVIDENCE
             # =========================================
-
             with tracer.start_as_current_span(
                 "autoheal.collect_evidence"
             ) as span:
-
                 span.set_attribute(
                     "jenkins.job.name",
                     job_name,
                 )
-
                 span.set_attribute(
                     "jenkins.build.number",
                     build_number,
                 )
-
                 build = (
                     await self.jenkins.get_build_info(
                         job_name,
                         build_number,
                     )
                 )
-
                 log = build.console_log or ""
-
                 span.set_attribute(
                     "jenkins.build.result",
                     build.result or "UNKNOWN",
                 )
-
                 span.set_attribute(
                     "jenkins.console_log_length",
                     len(log),
                 )
-
             # =========================================
             # 3. RULE-BASED CLASSIFICATION
             # =========================================
-
             with tracer.start_as_current_span(
                 "autoheal.classification.rules"
             ) as span:
-
                 classification_data = (
                     self.classifier.classify(log)
                 )
-
                 classification = (
                     FailureClassification(
                         **classification_data
                     )
                 )
-
                 span.set_attribute(
                     "failure.category",
                     classification.category,
                 )
-
                 span.set_attribute(
                     "failure.action",
                     classification.action,
                 )
-
                 span.set_attribute(
                     "classifier.source",
                     "rules",
                 )
-
                 span.set_attribute(
                     "classifier.confidence",
                     classification.confidence,
                 )
-
             # =========================================
             # 4. AI DIAGNOSTIC ANALYSIS
             # =========================================
             #
-            # Ollama analyzes EVERY failure when enabled.
+            # Ollama analyzes EVERY failure.
+            #
+            # AI is advisory.
             #
             # Rules remain authoritative for known failures.
             #
-            # AI provides:
-            # - root cause
-            # - reasoning
-            # - confidence
-            # - supporting evidence
-            #
-            # UNKNOWN failures may use AI as fallback.
-            #
-            # AI does NOT directly decide remediation.
-            # The Policy Engine remains authoritative.
+            # Policy remains authoritative for remediation.
             # =========================================
-
             ai_was_used = False
             ai_result = None
-
-            # Preserve the original deterministic category.
             rules_category = classification.category
-
             if self.ai_classifier.enabled:
-
                 print("-" * 60)
                 print("AI DIAGNOSTIC ANALYSIS")
                 print("-" * 60)
-
                 with tracer.start_as_current_span(
                     "autoheal.ai_diagnosis"
                 ) as span:
-
                     try:
-
                         ai_result = (
                             await self.ai_classifier.classify(
                                 log
                             )
                         )
-
                         ai_was_used = True
-
                         ai_classifications_total.add(
                             1,
                             {
-                                "category":
-                                    ai_result.category,
+                                "category": (
+                                    rules_category
+                                ),
                             },
                         )
-
                         span.set_attribute(
                             "ai.category",
                             ai_result.category,
                         )
-
                         span.set_attribute(
                             "ai.confidence",
                             ai_result.confidence,
                         )
-
                         span.set_attribute(
                             "ai.root_cause",
                             ai_result.root_cause,
                         )
-
                         span.set_attribute(
                             "ai.reasoning",
                             ai_result.reasoning,
                         )
-
+                        span.set_attribute(
+                            "ai.role",
+                            "diagnostic",
+                        )
+                        span.set_attribute(
+                            "rules.category",
+                            rules_category,
+                        )
                         print(
                             f"AI Category  : "
                             f"{ai_result.category}"
                         )
-
                         print(
                             f"AI Root Cause: "
                             f"{ai_result.root_cause}"
                         )
-
                         print(
                             f"AI Reasoning : "
                             f"{ai_result.reasoning}"
                         )
-
                         print(
                             f"AI Confidence: "
                             f"{ai_result.confidence}"
                         )
-
                         if ai_result.matched_evidence:
-
                             print(
                                 "AI Evidence  : "
                                 + "; ".join(
                                     ai_result.matched_evidence
                                 )
                             )
-
-                        # =================================
-                        # KNOWN FAILURE
-                        # =================================
-                        #
-                        # Rules remain authoritative.
-                        # AI is diagnostic only.
-                        # =================================
-
-                        if rules_category != "UNKNOWN":
-
-                            classification = (
-                                classification.model_copy(
-                                    update={
-                                        "ai_root_cause":
-                                            ai_result.root_cause,
-
-                                        "ai_reasoning":
-                                            ai_result.reasoning,
-
-                                        "ai_confidence":
-                                            ai_result.confidence,
-
-                                        "ai_evidence":
-                                            ai_result.matched_evidence,
-                                    }
-                                )
+                        if ai_result.recommendations:
+                            print(
+                                "AI Checks    :"
                             )
-
-                            span.set_attribute(
-                                "ai.role",
-                                "advisory",
-                            )
-
-                            span.set_attribute(
-                                "rules.category",
-                                rules_category,
-                            )
-
-                            if (
-                                ai_result.category
-                                != rules_category
+                            for recommendation in (
+                                ai_result.recommendations
                             ):
-
                                 print(
-                                    "AI/rules disagreement: "
-                                    f"rules={rules_category}, "
-                                    f"ai={ai_result.category}"
+                                    f"  - {recommendation}"
                                 )
-
-                        # =================================
-                        # UNKNOWN FAILURE
-                        # =================================
+                        # -----------------------------------------
+                        # AI IS ADVISORY
+                        # -----------------------------------------
                         #
-                        # AI becomes fallback classifier.
-                        # Policy still controls remediation.
-                        # =================================
-
-                        else:
-
-                            classification = (
-                                FailureClassification(
-                                    category=(
-                                        ai_result.category
-                                    ),
-
-                                    action="ESCALATE",
-
-                                    reason=(
-                                        "AI diagnosis: "
-                                        f"{ai_result.root_cause}"
-                                    ),
-
-                                    confidence=(
-                                        ai_result.confidence
-                                    ),
-
-                                    matched_pattern=None,
-
-                                    source="ai",
-
-                                    ai_root_cause=(
+                        # IMPORTANT:
+                        # Keep the deterministic classification.
+                        #
+                        # Do not replace CODE_FAILURE with whatever
+                        # category Ollama happens to return.
+                        #
+                        # Do not allow Ollama to change policy.
+                        # -----------------------------------------
+                        ai_reasoning = (
+                            self._format_ai_reasoning(
+                                ai_result
+                            )
+                        )
+                        classification = (
+                            classification.model_copy(
+                                update={
+                                    "ai_root_cause": (
                                         ai_result.root_cause
                                     ),
-
-                                    ai_reasoning=(
-                                        ai_result.reasoning
+                                    "ai_reasoning": (
+                                        ai_reasoning
                                     ),
-
-                                    ai_confidence=(
+                                    "ai_confidence": (
                                         ai_result.confidence
                                     ),
-
-                                    ai_evidence=(
+                                    "ai_evidence": (
                                         ai_result.matched_evidence
                                     ),
-                                )
+                                }
                             )
-
-                            span.set_attribute(
-                                "ai.role",
-                                "fallback_classifier",
+                        )
+                        if (
+                            ai_result.category
+                            != rules_category
+                        ):
+                            print(
+                                "AI/rules diagnostic difference: "
+                                f"rules={rules_category}, "
+                                f"ai={ai_result.category}"
                             )
-
                     except Exception as exc:
-
-                        span.record_exception(exc)
-
+                        span.record_exception(
+                            exc
+                        )
                         print(
                             "AI diagnostic analysis failed: "
                             f"{exc}"
                         )
-
-                        # =================================
-                        # KNOWN FAILURE + AI UNAVAILABLE
-                        # =================================
-                        #
-                        # Keep deterministic classification.
-                        # Safe remediation can still continue.
-                        # =================================
-
-                        if rules_category != "UNKNOWN":
-
-                            classification = (
-                                classification.model_copy(
-                                    update={
-                                        "ai_root_cause": None,
-
-                                        "ai_reasoning": (
-                                            "AI analysis "
-                                            "unavailable: "
-                                            f"{exc}"
-                                        ),
-
-                                        "ai_confidence": None,
-
-                                        "ai_evidence": [],
-                                    }
-                                )
-                            )
-
-                        # =================================
-                        # UNKNOWN + AI UNAVAILABLE
-                        # =================================
-                        #
-                        # Cannot safely classify.
-                        # Escalate.
-                        # =================================
-
-                        else:
-
-                            classification = (
-                                FailureClassification(
-                                    category="UNKNOWN",
-
-                                    action="ESCALATE",
-
-                                    reason=(
-                                        "Rules could not "
-                                        "classify the failure "
-                                        "and AI analysis was "
-                                        "unavailable."
+                        # AI failure must NEVER change the
+                        # deterministic AutoHeal decision.
+                        classification = (
+                            classification.model_copy(
+                                update={
+                                    "ai_root_cause": None,
+                                    "ai_reasoning": (
+                                        "AI analysis unavailable: "
+                                        f"{exc}"
                                     ),
-
-                                    confidence=0.0,
-
-                                    matched_pattern=None,
-
-                                    source="ai_error",
-
-                                    ai_root_cause=None,
-
-                                    ai_reasoning=str(exc),
-
-                                    ai_confidence=None,
-
-                                    ai_evidence=[],
-                                )
+                                    "ai_confidence": None,
+                                    "ai_evidence": [],
+                                }
                             )
-
+                        )
+                        # Safe rule-based remediation continues
+                        # exactly as before.
             # =========================================
             # 5. CREATE INCIDENT
             # =========================================
-
             incident = Incident(
                 incident_id=(
                     f"AH-{uuid.uuid4().hex[:8].upper()}"
@@ -671,30 +508,24 @@ class IncidentService:
                 console_log=log,
                 classification=classification,
             )
-
             root_span.set_attribute(
                 "incident.id",
                 incident.incident_id,
             )
-
             root_span.set_attribute(
                 "failure.category",
                 classification.category,
             )
-
             root_span.set_attribute(
                 "classifier.source",
                 classification.source,
             )
-
             # =========================================
             # 6. PERSIST INCIDENT
             # =========================================
-
             with tracer.start_as_current_span(
                 "autoheal.persist_incident"
             ):
-
                 database_incident_id = (
                     self.repository.create_incident(
                         incident_id=incident.incident_id,
@@ -731,7 +562,6 @@ class IncidentService:
                         ),
                     )
                 )
-
                 self.repository.add_audit_event(
                     incident_id=database_incident_id,
                     event_type="INCIDENT_CREATED",
@@ -740,13 +570,10 @@ class IncidentService:
                         f"{job_name} #{build_number}"
                     ),
                 )
-
             # =========================================
             # 7. AI AUDIT
             # =========================================
-
             if ai_was_used and ai_result is not None:
-
                 self.repository.add_audit_event(
                     incident_id=database_incident_id,
                     event_type="AI_ANALYSIS",
@@ -762,76 +589,60 @@ class IncidentService:
                         f"reasoning="
                         f"{ai_result.reasoning}; "
                         f"evidence="
-                        f"{'; '.join(ai_result.matched_evidence)}"
+                        f"{'; '.join(ai_result.matched_evidence)}; "
+                        f"recommendations="
+                        f"{'; '.join(ai_result.recommendations)}"
                     ),
                 )
-
             # =========================================
             # LOG INCIDENT
             # =========================================
-
             print()
             print("=" * 60)
             print("AUTOHEAL INCIDENT")
             print("=" * 60)
-
             print(
                 f"Incident ID : "
                 f"{incident.incident_id}"
             )
-
             print(
-                f"Job         : "
-                f"{job_name}"
+                f"Job         : {job_name}"
             )
-
             print(
-                f"Build       : "
-                f"#{build_number}"
+                f"Build       : #{build_number}"
             )
-
             print(
-                f"Status      : "
-                f"{incident.status}"
+                f"Status      : {incident.status}"
             )
-
             print("-" * 60)
             print("CLASSIFICATION")
             print("-" * 60)
-
             print(
                 f"Category    : "
                 f"{classification.category}"
             )
-
             print(
                 f"Action      : "
                 f"{classification.action}"
             )
-
             print(
                 f"Source      : "
                 f"{classification.source}"
             )
-
             print(
                 f"Confidence  : "
                 f"{classification.confidence}"
             )
-
             print(
                 f"Reason      : "
                 f"{classification.reason}"
             )
-
             # =========================================
             # 8. POLICY ENGINE
             # =========================================
-
             with tracer.start_as_current_span(
                 "autoheal.policy.evaluate"
             ) as span:
-
                 policy = self.policy.evaluate(
                     category=classification.category,
                     classifier_action=(
@@ -842,76 +653,64 @@ class IncidentService:
                         classification.confidence
                     ),
                 )
-
                 policy_decisions_total.add(
                     1,
                     {
                         "category": policy.category,
-                        "allowed": str(policy.allowed),
+                        "allowed": str(
+                            policy.allowed
+                        ),
                         "action": policy.action,
                         "risk": policy.risk_level,
                     },
                 )
-
                 span.set_attribute(
                     "policy.category",
                     policy.category,
                 )
-
                 span.set_attribute(
                     "policy.allowed",
                     policy.allowed,
                 )
-
                 span.set_attribute(
                     "policy.action",
                     policy.action,
                 )
-
                 span.set_attribute(
                     "policy.risk_level",
                     policy.risk_level,
                 )
-
                 span.set_attribute(
                     "policy.max_attempts",
                     policy.max_attempts,
                 )
-
             print("-" * 60)
             print("POLICY DECISION")
             print("-" * 60)
-
             print(
-                f"Risk Level       : "
+                f"Risk Level      : "
                 f"{policy.risk_level}"
             )
-
             print(
-                f"Allowed          : "
+                f"Allowed         : "
                 f"{policy.allowed}"
             )
-
             print(
-                f"Policy Action    : "
+                f"Policy Action   : "
                 f"{policy.action}"
             )
-
             print(
-                f"Max Attempts     : "
+                f"Max Attempts    : "
                 f"{policy.max_attempts}"
             )
-
             print(
-                f"Approval Needed  : "
+                f"Approval Needed : "
                 f"{policy.requires_approval}"
             )
-
             print(
-                f"Reason           : "
+                f"Reason          : "
                 f"{policy.reason}"
             )
-
             self.repository.add_audit_event(
                 incident_id=database_incident_id,
                 event_type="POLICY_EVALUATED",
@@ -926,13 +725,10 @@ class IncidentService:
                     f"{policy.requires_approval}"
                 ),
             )
-
             # =========================================
             # 9. POLICY DENIED
             # =========================================
-
             if not policy.allowed:
-
                 policy_denials_total.add(
                     1,
                     {
@@ -940,7 +736,6 @@ class IncidentService:
                         "reason": policy.action,
                     },
                 )
-
                 escalated_total.add(
                     1,
                     {
@@ -948,12 +743,10 @@ class IncidentService:
                         "action": policy.action,
                     },
                 )
-
                 root_span.set_attribute(
                     "result",
                     "ESCALATED",
                 )
-
                 incident.remediation = (
                     RemediationResult(
                         action=policy.action,
@@ -961,7 +754,6 @@ class IncidentService:
                         message=policy.reason,
                     )
                 )
-
                 self.repository.create_attempt(
                     incident_id=database_incident_id,
                     attempt_number=0,
@@ -973,13 +765,11 @@ class IncidentService:
                     queue_url=None,
                     verification_result=None,
                 )
-
                 self.repository.add_audit_event(
                     incident_id=database_incident_id,
                     event_type="POLICY_DENIED",
                     message=policy.reason,
                 )
-
                 self._print_result_summary(
                     incident=incident,
                     classification=classification,
@@ -987,89 +777,68 @@ class IncidentService:
                     result=incident.remediation,
                     database_incident_id=database_incident_id,
                 )
-
                 print("-" * 60)
                 print("POLICY RESULT")
                 print("-" * 60)
-
                 print(
                     f"Decision    : "
                     f"{policy.action}"
                 )
-
                 print(
                     f"Message     : "
                     f"{policy.reason}"
                 )
-
                 print("=" * 60)
-
                 self._record_processing_duration(
                     start_time,
                     job_name,
                 )
-
                 return incident
-
             # =========================================
             # 10. CIRCUIT BREAKER
             # =========================================
-
             with tracer.start_as_current_span(
                 "autoheal.safety.circuit_breaker"
             ) as span:
-
                 allowed = (
                     self.circuit_breaker.allow(
                         job_name,
                         policy.category,
                     )
                 )
-
                 attempt = (
                     self.circuit_breaker.count(
                         job_name,
                         policy.category,
                     )
                 )
-
                 span.set_attribute(
                     "circuit_breaker.allowed",
                     allowed,
                 )
-
                 span.set_attribute(
                     "circuit_breaker.attempt",
                     attempt,
                 )
-
             print("-" * 60)
             print("SAFETY CHECK")
             print("-" * 60)
-
             print(
-                f"Attempt     : "
-                f"{attempt}/3"
+                f"Attempt : {attempt}/3"
             )
-
             print(
-                f"Allowed     : "
-                f"{allowed}"
+                f"Allowed : {allowed}"
             )
-
             # =========================================
             # 11. POLICY ATTEMPT LIMIT
             # =========================================
-
             if attempt > policy.max_attempts:
-
                 message = (
                     f"Policy limit reached for "
                     f"{policy.category}. "
                     f"Maximum attempts: "
                     f"{policy.max_attempts}."
                 )
-
                 escalated_total.add(
                     1,
                     {
@@ -1077,12 +846,10 @@ class IncidentService:
                         "action": "ESCALATE",
                     },
                 )
-
                 root_span.set_attribute(
                     "result",
                     "ESCALATED",
                 )
-
                 incident.remediation = (
                     RemediationResult(
                         action="ESCALATE",
@@ -1090,7 +857,6 @@ class IncidentService:
                         message=message,
                     )
                 )
-
                 self.repository.create_attempt(
                     incident_id=database_incident_id,
                     attempt_number=attempt,
@@ -1102,13 +868,11 @@ class IncidentService:
                     queue_url=None,
                     verification_result=None,
                 )
-
                 self.repository.add_audit_event(
                     incident_id=database_incident_id,
                     event_type="POLICY_LIMIT_REACHED",
                     message=message,
                 )
-
                 self._print_result_summary(
                     incident=incident,
                     classification=classification,
@@ -1116,35 +880,26 @@ class IncidentService:
                     result=incident.remediation,
                     database_incident_id=database_incident_id,
                 )
-
                 print(
                     "Decision    : ESCALATE"
                 )
-
                 print(
                     f"Message     : {message}"
                 )
-
                 print("=" * 60)
-
                 self._record_processing_duration(
                     start_time,
                     job_name,
                 )
-
                 return incident
-
             # =========================================
             # 12. CIRCUIT BREAKER DENIED
             # =========================================
-
             if not allowed:
-
                 message = (
                     "Circuit breaker opened after "
                     "repeated remediation attempts."
                 )
-
                 escalated_total.add(
                     1,
                     {
@@ -1152,12 +907,10 @@ class IncidentService:
                         "action": "ESCALATE",
                     },
                 )
-
                 root_span.set_attribute(
                     "result",
                     "ESCALATED",
                 )
-
                 incident.remediation = (
                     RemediationResult(
                         action="ESCALATE",
@@ -1165,7 +918,6 @@ class IncidentService:
                         message=message,
                     )
                 )
-
                 self.repository.create_attempt(
                     incident_id=database_incident_id,
                     attempt_number=attempt,
@@ -1177,13 +929,11 @@ class IncidentService:
                     queue_url=None,
                     verification_result=None,
                 )
-
                 self.repository.add_audit_event(
                     incident_id=database_incident_id,
                     event_type="CIRCUIT_BREAKER_OPEN",
                     message=message,
                 )
-
                 self._print_result_summary(
                     incident=incident,
                     classification=classification,
@@ -1191,43 +941,35 @@ class IncidentService:
                     result=incident.remediation,
                     database_incident_id=database_incident_id,
                 )
-
                 print(
                     "Decision    : ESCALATE"
                 )
-
                 print("=" * 60)
-
                 self._record_processing_duration(
                     start_time,
                     job_name,
                 )
-
                 return incident
-
             # =========================================
             # 13. POLICY-CONTROLLED REMEDIATION
             # =========================================
-
             print("-" * 60)
-            print("POLICY-CONTROLLED REMEDIATION")
+            print(
+                "POLICY-CONTROLLED REMEDIATION"
+            )
             print("-" * 60)
-
             print(
                 f"Policy Action : "
                 f"{policy.action}"
             )
-
             print(
                 f"Risk Level    : "
                 f"{policy.risk_level}"
             )
-
             print(
                 f"Max Attempts  : "
                 f"{policy.max_attempts}"
             )
-
             self.repository.add_audit_event(
                 incident_id=database_incident_id,
                 event_type="REMEDIATION_STARTED",
@@ -1236,7 +978,6 @@ class IncidentService:
                     f"{policy.action}"
                 ),
             )
-
             remediation_attempts_total.add(
                 1,
                 {
@@ -1244,28 +985,22 @@ class IncidentService:
                     "action": policy.action,
                 },
             )
-
             with tracer.start_as_current_span(
                 "autoheal.remediation"
             ) as span:
-
                 span.set_attribute(
                     "remediation.category",
                     policy.category,
                 )
-
                 span.set_attribute(
                     "remediation.action",
                     policy.action,
                 )
-
                 span.set_attribute(
                     "remediation.attempt",
                     attempt,
                 )
-
                 try:
-
                     result = (
                         await self.remediation.execute(
                             job_name=job_name,
@@ -1273,11 +1008,8 @@ class IncidentService:
                             action=policy.action,
                         )
                     )
-
                 except Exception as exc:
-
                     span.record_exception(exc)
-
                     result = {
                         "action": "ESCALATE",
                         "success": False,
@@ -1286,11 +1018,9 @@ class IncidentService:
                             f"{exc}"
                         ),
                     }
-
             # =========================================
             # 14. STORE REMEDIATION RESULT
             # =========================================
-
             incident.remediation = (
                 RemediationResult(
                     action=result["action"],
@@ -1307,7 +1037,6 @@ class IncidentService:
                     ),
                 )
             )
-
             self.repository.create_attempt(
                 incident_id=database_incident_id,
                 attempt_number=attempt,
@@ -1325,29 +1054,23 @@ class IncidentService:
                     "verification_result"
                 ),
             )
-
             # =========================================
             # 15. AUDIT RESULT
             # =========================================
-
             event_type = (
                 "REMEDIATION_SUCCEEDED"
                 if result["success"]
                 else "REMEDIATION_ESCALATED"
             )
-
             self.repository.add_audit_event(
                 incident_id=database_incident_id,
                 event_type=event_type,
                 message=result["message"],
             )
-
             # =========================================
             # 16. METRICS RESULT
             # =========================================
-
             if result["success"]:
-
                 remediation_success_total.add(
                     1,
                     {
@@ -1355,26 +1078,21 @@ class IncidentService:
                         "action": result["action"],
                     },
                 )
-
                 healed_total.add(
                     1,
                     {
                         "category": policy.category,
                     },
                 )
-
                 root_span.set_attribute(
                     "result",
                     "HEALED",
                 )
-
                 root_span.set_attribute(
                     "remediation.success",
                     True,
                 )
-
             else:
-
                 remediation_failure_total.add(
                     1,
                     {
@@ -1382,7 +1100,6 @@ class IncidentService:
                         "action": result["action"],
                     },
                 )
-
                 escalated_total.add(
                     1,
                     {
@@ -1390,67 +1107,54 @@ class IncidentService:
                         "action": result["action"],
                     },
                 )
-
                 root_span.set_attribute(
                     "result",
                     "ESCALATED",
                 )
-
                 root_span.set_attribute(
                     "remediation.success",
                     False,
                 )
-
             # =========================================
             # 17. LOG RESULT
             # =========================================
-
             print("-" * 60)
             print("REMEDIATION RESULT")
             print("-" * 60)
-
             print(
-                f"Action      : "
+                f"Action  : "
                 f"{result['action']}"
             )
-
             print(
-                f"Success     : "
+                f"Success : "
                 f"{result['success']}"
             )
-
             print(
-                f"Message     : "
+                f"Message : "
                 f"{result['message']}"
             )
-
             if result.get("queue_url"):
-
                 print(
-                    f"Queue       : "
+                    f"Queue   : "
                     f"{result['queue_url']}"
                 )
-
-            if result.get("new_build_number"):
-
+            if result.get(
+                "new_build_number"
+            ):
                 print(
-                    f"New Build   : "
+                    f"New Build : "
                     f"#{result['new_build_number']}"
                 )
-
             if result.get(
                 "verification_result"
             ):
-
                 print(
-                    f"Verified    : "
+                    f"Verified : "
                     f"{result['verification_result']}"
                 )
-
             # =========================================
             # 18. AUTOHEAL RESULT SUMMARY
             # =========================================
-
             self._print_result_summary(
                 incident=incident,
                 classification=classification,
@@ -1458,33 +1162,24 @@ class IncidentService:
                 result=incident.remediation,
                 database_incident_id=database_incident_id,
             )
-
             # =========================================
             # 19. RESET CIRCUIT AFTER SUCCESS
             # =========================================
-
             if result["success"]:
-
                 self.circuit_breaker.reset(
                     job_name,
                     policy.category,
                 )
-
                 print(
-                    "Result      : HEALED"
+                    "Result : HEALED"
                 )
-
             else:
-
                 print(
-                    "Result      : ESCALATE"
+                    "Result : ESCALATE"
                 )
-
             print("=" * 60)
-
             self._record_processing_duration(
                 start_time,
                 job_name,
             )
-
             return incident
