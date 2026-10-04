@@ -1,34 +1,48 @@
+"""
+Local Ollama diagnostic classifier.
+
+AutoHeal uses this component only for diagnosis.
+
+The AI does NOT control:
+- policy
+- remediation
+- retries
+- source-code changes
+- dependency changes
+
+The deterministic classifier and policy engine remain authoritative.
+"""
+
 import json
 import os
-import re
+from typing import Any
 
 import httpx
 
 from app.ai.models import AIClassification
-from app.ai.prompt import SYSTEM_PROMPT, build_prompt
+from app.ai.prompt import (
+    SYSTEM_PROMPT,
+    build_user_prompt,
+)
 
 
 class AIClassifier:
     """
-    Local Ollama-powered CI/CD diagnostic assistant.
-
-    AI is advisory only.
-
-    It analyzes Jenkins logs and returns:
-        - diagnostic category
-        - root cause
-        - reasoning
-        - confidence
-        - evidence
-        - recommendations
-
-    It does NOT decide AutoHeal remediation.
+    Local Ollama-powered Jenkins failure diagnostic assistant.
     """
 
     def __init__(self):
         self.enabled = (
-            os.getenv("AI_ENABLED", "false").lower()
-            in {"true", "1", "yes", "on"}
+            os.getenv(
+                "AI_ENABLED",
+                "false",
+            ).strip().lower()
+            in {
+                "1",
+                "true",
+                "yes",
+                "on",
+            }
         )
 
         self.ollama_url = os.getenv(
@@ -44,128 +58,28 @@ class AIClassifier:
         self.max_log_chars = int(
             os.getenv(
                 "AI_MAX_LOG_CHARS",
-                "12000",
+                "40000",
             )
         )
 
-        self.timeout = float(
+        self.timeout_seconds = float(
             os.getenv(
                 "AI_TIMEOUT_SECONDS",
-                "120",
+                "180",
             )
         )
 
-    @staticmethod
-    def _extract_json(text: str) -> dict:
-        """
-        Extract JSON from the Ollama response.
-
-        Handles:
-        - pure JSON
-        - Markdown JSON fences
-        - accidental surrounding text
-        """
-
-        text = text.strip()
-
-        # Remove Markdown code fences if the model ignored
-        # the instruction not to use them.
-        text = re.sub(
-            r"^```(?:json)?\s*",
-            "",
-            text,
-            flags=re.IGNORECASE,
-        )
-
-        text = re.sub(
-            r"\s*```$",
-            "",
-            text,
-        )
-
-        text = text.strip()
-
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            pass
-
-        # Try to locate the first JSON object.
-        start = text.find("{")
-        end = text.rfind("}")
-
-        if start == -1 or end == -1 or end <= start:
-            raise ValueError(
-                "Ollama did not return a JSON object."
-            )
-
-        candidate = text[start : end + 1]
-
-        try:
-            return json.loads(candidate)
-        except json.JSONDecodeError as exc:
-            raise ValueError(
-                "Ollama returned invalid JSON."
-            ) from exc
-
-    @staticmethod
-    def _normalise_string(
-        value,
-        default: str,
-    ) -> str:
-        if value is None:
-            return default
-
-        value = str(value).strip()
-
-        if not value:
-            return default
-
-        return value
-
-    @staticmethod
-    def _normalise_list(value) -> list[str]:
-        if value is None:
-            return []
-
-        if isinstance(value, str):
-            value = [value]
-
-        if not isinstance(value, list):
-            return []
-
-        result = []
-
-        for item in value:
-            item = str(item).strip()
-
-            if item:
-                result.append(item)
-
-        return result[:10]
-
-    @staticmethod
-    def _normalise_confidence(value) -> float:
-        try:
-            confidence = float(value)
-        except (TypeError, ValueError):
-            return 0.0
-
-        # Some local models occasionally return percentages.
-        if confidence > 1.0 and confidence <= 100.0:
-            confidence = confidence / 100.0
-
-        return max(
-            0.0,
-            min(1.0, confidence),
-        )
+    # =============================================================
+    # PUBLIC API
+    # =============================================================
 
     async def classify(
         self,
         log: str,
+        rules_category: str | None = None,
     ) -> AIClassification:
         """
-        Analyze a Jenkins failure log with Ollama.
+        Analyze a Jenkins console log with Ollama.
         """
 
         if not self.enabled:
@@ -173,91 +87,611 @@ class AIClassifier:
                 "AI analysis is disabled."
             )
 
-        if not log:
-            raise ValueError(
-                "Cannot perform AI analysis because "
-                "the Jenkins console log is empty."
+        original_log = log or ""
+
+        if not original_log.strip():
+            raise RuntimeError(
+                "Jenkins console log is empty."
             )
 
-        # Keep the prompt bounded so a huge Jenkins log does not
-        # overwhelm the local model.
-        trimmed_log = log[-self.max_log_chars :]
+        prepared_log = self._prepare_log(
+            original_log
+        )
+
+        user_prompt = build_user_prompt(
+            log=prepared_log,
+            rules_category=rules_category,
+        )
+
+        print()
+        print("=" * 72)
+        print("OLLAMA AI DIAGNOSTIC REQUEST")
+        print("=" * 72)
+
+        print(
+            f"Model              : {self.model}"
+        )
+
+        print(
+            f"Ollama URL         : {self.ollama_url}"
+        )
+
+        print(
+            f"Original log chars : "
+            f"{len(original_log)}"
+        )
+
+        print(
+            f"AI log chars       : "
+            f"{len(prepared_log)}"
+        )
+
+        print(
+            f"Rules category     : "
+            f"{rules_category or 'UNKNOWN'}"
+        )
+
+        print(
+            "Failure evidence   : "
+            f"{self._count_failure_lines(prepared_log)} "
+            "candidate lines"
+        )
+
+        print("-" * 72)
+        print("LOG SENT TO OLLAMA")
+        print("-" * 72)
+
+        # Print the exact text being supplied to the model.
+        #
+        # This is deliberately visible while we debug the integration.
+        # It lets us verify that the actual pytest/Docker/dependency
+        # failure is reaching Ollama.
+        print(prepared_log)
+
+        print("-" * 72)
+        print()
 
         payload = {
             "model": self.model,
             "system": SYSTEM_PROMPT,
-            "prompt": build_prompt(trimmed_log),
+            "prompt": user_prompt,
             "stream": False,
             "format": "json",
             "options": {
                 "temperature": 0.1,
+                "top_p": 0.9,
+                "num_ctx": 16384,
             },
         }
 
-        url = (
-            f"{self.ollama_url}"
-            "/api/generate"
+        endpoint = (
+            f"{self.ollama_url}/api/generate"
         )
 
-        async with httpx.AsyncClient(
-            timeout=self.timeout
-        ) as client:
+        try:
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(
+                    self.timeout_seconds,
+                    connect=10.0,
+                )
+            ) as client:
 
-            response = await client.post(
-                url,
-                json=payload,
-            )
+                response = await client.post(
+                    endpoint,
+                    json=payload,
+                )
 
-            response.raise_for_status()
+                response.raise_for_status()
 
-        data = response.json()
+                data = response.json()
 
-        raw_output = data.get(
+        except httpx.HTTPError as exc:
+            raise RuntimeError(
+                f"Ollama request failed: {exc}"
+            ) from exc
+
+        except Exception as exc:
+            raise RuntimeError(
+                f"Ollama communication error: {exc}"
+            ) from exc
+
+        raw_response = data.get(
             "response",
             "",
         )
 
-        if not raw_output:
-            raise ValueError(
+        if not isinstance(
+            raw_response,
+            str,
+        ):
+            raw_response = str(
+                raw_response
+            )
+
+        raw_response = raw_response.strip()
+
+        print()
+        print("=" * 72)
+        print("OLLAMA RAW RESPONSE")
+        print("=" * 72)
+        print(raw_response)
+        print("=" * 72)
+        print()
+
+        if not raw_response:
+            raise RuntimeError(
                 "Ollama returned an empty response."
             )
 
-        parsed = self._extract_json(
-            raw_output
+        result = self._parse_response(
+            raw_response
         )
 
-        category = self._normalise_string(
-            parsed.get("category"),
-            "unknown",
+        return result
+
+    # =============================================================
+    # LOG PREPARATION
+    # =============================================================
+
+    def _prepare_log(
+        self,
+        log: str,
+    ) -> str:
+        """
+        Prepare the Jenkins console for the model.
+
+        Strategy:
+
+        1. If the complete log fits within the configured limit,
+           send everything.
+
+        2. If it is larger:
+           - keep the beginning
+           - keep failure-focused lines
+           - keep context around failure lines
+           - keep the end of the log
+
+        This prevents the important pytest/Docker/etc. failure from
+        being lost merely because Jenkins produced a long console.
+        """
+
+        log = log or ""
+
+        if len(log) <= self.max_log_chars:
+            return log
+
+        lines = log.splitlines()
+
+        selected: list[str] = []
+
+        # ---------------------------------------------------------
+        # Beginning
+        # ---------------------------------------------------------
+
+        beginning_chars = 5000
+
+        beginning = log[
+            :beginning_chars
+        ]
+
+        selected.append(
+            "===== BEGINNING OF JENKINS CONSOLE ====="
         )
 
-        root_cause = self._normalise_string(
-            parsed.get("root_cause"),
-            "The root cause could not be determined from the available log.",
+        selected.append(
+            beginning
         )
 
-        reasoning = self._normalise_string(
-            parsed.get("reasoning"),
-            "The available Jenkins log did not provide enough diagnostic evidence.",
+        # ---------------------------------------------------------
+        # Failure-focused regions
+        # ---------------------------------------------------------
+
+        failure_indexes = []
+
+        for index, line in enumerate(lines):
+
+            if self._is_failure_line(line):
+                failure_indexes.append(
+                    index
+                )
+
+        selected.append(
+            "===== FAILURE-FOCUSED JENKINS EVIDENCE ====="
         )
 
-        confidence = self._normalise_confidence(
-            parsed.get("confidence")
+        # Keep context around each failure marker.
+        #
+        # Limit the number of regions so a noisy Jenkins log does not
+        # consume the entire model context.
+        used_ranges: list[tuple[int, int]] = []
+
+        for index in failure_indexes[-80:]:
+
+            start = max(
+                0,
+                index - 4,
+            )
+
+            end = min(
+                len(lines),
+                index + 5,
+            )
+
+            current_range = (
+                start,
+                end,
+            )
+
+            overlaps = False
+
+            for existing_start, existing_end in used_ranges:
+                if (
+                    start <= existing_end
+                    and end >= existing_start
+                ):
+                    overlaps = True
+                    break
+
+            if overlaps:
+                continue
+
+            used_ranges.append(
+                current_range
+            )
+
+            selected.extend(
+                lines[start:end]
+            )
+
+        # ---------------------------------------------------------
+        # End
+        # ---------------------------------------------------------
+
+        selected.append(
+            "===== END OF JENKINS CONSOLE ====="
         )
 
-        evidence = self._normalise_list(
-            parsed.get("matched_evidence")
+        selected.append(
+            log[-10000:]
         )
 
-        recommendations = self._normalise_list(
-            parsed.get("recommendations")
+        prepared = "\n".join(
+            selected
         )
+
+        # Final hard limit.
+
+        if len(prepared) > self.max_log_chars:
+
+            # Preserve the end because Jenkins normally prints the
+            # final failure summary there.
+            prepared = (
+                prepared[
+                    :self.max_log_chars - 10000
+                ]
+                + "\n\n"
+                + "===== FINAL JENKINS LOG SECTION =====\n"
+                + log[-10000:]
+            )
+
+        return prepared
+
+    # =============================================================
+    # FAILURE DETECTION
+    # =============================================================
+
+    def _is_failure_line(
+        self,
+        line: str,
+    ) -> bool:
+        """
+        Identify lines likely to contain useful failure evidence.
+        """
+
+        text = line.strip()
+
+        if not text:
+            return False
+
+        tokens = (
+            "ERROR",
+            "Error",
+            "error",
+            "FAILED",
+            "Failed",
+            "failed",
+            "FAIL",
+            "Traceback",
+            "AssertionError",
+            "Exception",
+            "ModuleNotFoundError",
+            "ImportError",
+            "PermissionError",
+            "FileNotFoundError",
+            "TimeoutError",
+            "timeout",
+            "timed out",
+            "connection refused",
+            "Connection refused",
+            "connection reset",
+            "Connection reset",
+            "DNS",
+            "Could not find",
+            "No matching distribution",
+            "ResolutionImpossible",
+            "failed to solve",
+            "command not found",
+            "exit code",
+            "unauthorized",
+            "Unauthorized",
+            "authentication required",
+            "denied",
+            "manifest unknown",
+            "No such file",
+            "permission denied",
+            "agent is offline",
+            "workspace",
+        )
+
+        return any(
+            token in text
+            for token in tokens
+        )
+
+    def _count_failure_lines(
+        self,
+        log: str,
+    ) -> int:
+        """
+        Count likely diagnostic lines for observability/debugging.
+        """
+
+        return sum(
+            1
+            for line in log.splitlines()
+            if self._is_failure_line(line)
+        )
+
+    # =============================================================
+    # RESPONSE PARSING
+    # =============================================================
+
+    def _parse_response(
+        self,
+        raw_response: str,
+    ) -> AIClassification:
+        """
+        Parse Ollama's JSON response safely.
+        """
+
+        try:
+            data = json.loads(
+                raw_response
+            )
+
+        except json.JSONDecodeError as exc:
+
+            # Some local models occasionally wrap JSON in markdown.
+            # Try to recover the first JSON object.
+            recovered = self._extract_json_object(
+                raw_response
+            )
+
+            if recovered is None:
+                raise RuntimeError(
+                    "Ollama returned invalid JSON: "
+                    f"{exc}"
+                ) from exc
+
+            data = recovered
+
+        if not isinstance(
+            data,
+            dict,
+        ):
+            raise RuntimeError(
+                "Ollama JSON response was not an object."
+            )
+
+        category = self._clean_string(
+            data.get(
+                "category",
+                "unknown",
+            )
+        )
+
+        root_cause = self._clean_string(
+            data.get(
+                "root_cause",
+                "",
+            )
+        )
+
+        reasoning = self._clean_string(
+            data.get(
+                "reasoning",
+                "",
+            )
+        )
+
+        confidence = self._normalize_confidence(
+            data.get(
+                "confidence",
+                0.0,
+            )
+        )
+
+        matched_evidence = self._normalize_list(
+            data.get(
+                "matched_evidence",
+                [],
+            )
+        )
+
+        recommendations = self._normalize_list(
+            data.get(
+                "recommendations",
+                [],
+            )
+        )
+
+        if not category:
+            category = "unknown"
+
+        if not root_cause:
+            root_cause = (
+                "The AI did not provide a root cause."
+            )
+
+        if not reasoning:
+            reasoning = (
+                "The AI did not provide additional reasoning."
+            )
 
         return AIClassification(
             category=category,
             root_cause=root_cause,
             reasoning=reasoning,
             confidence=confidence,
-            matched_evidence=evidence,
+            matched_evidence=matched_evidence,
             recommendations=recommendations,
+        )
+
+    # =============================================================
+    # JSON HELPERS
+    # =============================================================
+
+    def _extract_json_object(
+        self,
+        text: str,
+    ) -> dict[str, Any] | None:
+        """
+        Recover a JSON object from a response that contains
+        additional text or markdown fences.
+        """
+
+        start = text.find("{")
+        end = text.rfind("}")
+
+        if start == -1 or end == -1:
+            return None
+
+        if end <= start:
+            return None
+
+        candidate = text[
+            start:end + 1
+        ]
+
+        try:
+            parsed = json.loads(
+                candidate
+            )
+
+        except json.JSONDecodeError:
+            return None
+
+        if isinstance(
+            parsed,
+            dict,
+        ):
+            return parsed
+
+        return None
+
+    def _clean_string(
+        self,
+        value: Any,
+    ) -> str:
+        """
+        Normalize model string output.
+        """
+
+        if value is None:
+            return ""
+
+        if isinstance(
+            value,
+            str,
+        ):
+            return value.strip()
+
+        return str(
+            value
+        ).strip()
+
+    def _normalize_list(
+        self,
+        value: Any,
+    ) -> list[str]:
+        """
+        Normalize model list output.
+        """
+
+        if value is None:
+            return []
+
+        if isinstance(
+            value,
+            str,
+        ):
+            value = [
+                value
+            ]
+
+        if not isinstance(
+            value,
+            list,
+        ):
+            return [
+                str(value)
+            ]
+
+        result = []
+
+        for item in value:
+
+            if item is None:
+                continue
+
+            text = str(
+                item
+            ).strip()
+
+            if text:
+                result.append(
+                    text
+                )
+
+        return result
+
+    def _normalize_confidence(
+        self,
+        value: Any,
+    ) -> float:
+        """
+        Normalize confidence into [0.0, 1.0].
+        """
+
+        try:
+            confidence = float(
+                value
+            )
+
+        except (
+            TypeError,
+            ValueError,
+        ):
+            return 0.0
+
+        # Handle models returning percentages.
+        if confidence > 1.0:
+            confidence = confidence / 100.0
+
+        return max(
+            0.0,
+            min(
+                1.0,
+                confidence,
+            ),
         )
