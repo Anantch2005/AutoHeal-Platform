@@ -34,22 +34,23 @@ class IncidentService:
         self.jenkins = JenkinsCollector()
         self.classifier = FailureClassifier()
 
-        # Phase 5 AI fallback
+        # AI diagnostic engine.
+        # Ollama analyzes every failure when enabled.
         self.ai_classifier = AIClassifier()
 
-        # Phase 4 policy engine
+        # Policy engine remains authoritative for remediation.
         self.policy = PolicyEngine()
 
-        # Remediation engine
+        # Remediation engine.
         self.remediation = RemediationExecutor()
 
-        # Safety protection
+        # Safety protection.
         self.circuit_breaker = CircuitBreaker(
             max_attempts=3,
             window_minutes=30,
         )
 
-        # PostgreSQL persistence
+        # PostgreSQL persistence.
         self.repository = IncidentRepository()
 
     def _record_processing_duration(
@@ -166,7 +167,6 @@ class IncidentService:
             or classification.ai_reasoning
             or classification.ai_confidence is not None
         ):
-
             print("-" * 72)
             print("AI OUTPUT")
             print("-" * 72)
@@ -187,7 +187,6 @@ class IncidentService:
             )
 
             if classification.ai_evidence:
-
                 print(
                     "AI Evidence       : "
                     + "; ".join(
@@ -207,19 +206,15 @@ class IncidentService:
         # =========================================
         # PERSIST FINAL RESULT
         # =========================================
-        #
-        # This creates a single high-level audit event
-        # that Grafana and operators can use to understand
-        # the final outcome without reconstructing every
-        # previous event.
-        #
+
         self.repository.add_audit_event(
             incident_id=database_incident_id,
             event_type="AUTOHEAL_RESULT",
             message=(
                 f"category={classification.category}; "
                 f"classifier_source={classification.source}; "
-                f"classifier_confidence={classification.confidence}; "
+                f"classifier_confidence="
+                f"{classification.confidence}; "
                 f"policy_allowed={policy.allowed}; "
                 f"policy_risk={policy.risk_level}; "
                 f"policy_action={policy.action}; "
@@ -227,7 +222,8 @@ class IncidentService:
                 f"retry_build={result.new_build_number}; "
                 f"verification={verification}; "
                 f"final_result={final_result}; "
-                f"ai_confidence={classification.ai_confidence}; "
+                f"ai_confidence="
+                f"{classification.ai_confidence}; "
                 f"ai_root_cause="
                 f"{classification.ai_root_cause or ''}"
             ),
@@ -284,6 +280,7 @@ class IncidentService:
                     job_name,
                     build_number,
                 ):
+
                     root_span.set_attribute(
                         "incident.duplicate",
                         True,
@@ -377,22 +374,39 @@ class IncidentService:
                 )
 
             # =========================================
-            # 4. AI FALLBACK FOR UNKNOWN FAILURES
+            # 4. AI DIAGNOSTIC ANALYSIS
+            # =========================================
+            #
+            # Ollama analyzes EVERY failure when enabled.
+            #
+            # Rules remain authoritative for known failures.
+            #
+            # AI provides:
+            # - root cause
+            # - reasoning
+            # - confidence
+            # - supporting evidence
+            #
+            # UNKNOWN failures may use AI as fallback.
+            #
+            # AI does NOT directly decide remediation.
+            # The Policy Engine remains authoritative.
             # =========================================
 
             ai_was_used = False
+            ai_result = None
 
-            if (
-                classification.category == "UNKNOWN"
-                and self.ai_classifier.enabled
-            ):
+            # Preserve the original deterministic category.
+            rules_category = classification.category
+
+            if self.ai_classifier.enabled:
 
                 print("-" * 60)
-                print("AI CLASSIFICATION")
+                print("AI DIAGNOSTIC ANALYSIS")
                 print("-" * 60)
 
                 with tracer.start_as_current_span(
-                    "autoheal.classification.ai"
+                    "autoheal.ai_diagnosis"
                 ) as span:
 
                     try:
@@ -408,9 +422,8 @@ class IncidentService:
                         ai_classifications_total.add(
                             1,
                             {
-                                "category": (
-                                    ai_result.category
-                                ),
+                                "category":
+                                    ai_result.category,
                             },
                         )
 
@@ -424,46 +437,14 @@ class IncidentService:
                             ai_result.confidence,
                         )
 
-                        classification = (
-                            FailureClassification(
-                                category=(
-                                    ai_result.category
-                                ),
+                        span.set_attribute(
+                            "ai.root_cause",
+                            ai_result.root_cause,
+                        )
 
-                                # AI proposes a diagnosis.
-                                # Policy Engine decides whether
-                                # remediation is permitted.
-                                action="ESCALATE",
-
-                                reason=(
-                                    "AI diagnosis: "
-                                    f"{ai_result.root_cause}"
-                                ),
-
-                                confidence=(
-                                    ai_result.confidence
-                                ),
-
-                                matched_pattern=None,
-
-                                source="ai",
-
-                                ai_root_cause=(
-                                    ai_result.root_cause
-                                ),
-
-                                ai_reasoning=(
-                                    ai_result.reasoning
-                                ),
-
-                                ai_confidence=(
-                                    ai_result.confidence
-                                ),
-
-                                ai_evidence=(
-                                    ai_result.matched_evidence
-                                ),
-                            )
+                        span.set_attribute(
+                            "ai.reasoning",
+                            ai_result.reasoning,
                         )
 
                         print(
@@ -486,34 +467,193 @@ class IncidentService:
                             f"{ai_result.confidence}"
                         )
 
+                        if ai_result.matched_evidence:
+
+                            print(
+                                "AI Evidence  : "
+                                + "; ".join(
+                                    ai_result.matched_evidence
+                                )
+                            )
+
+                        # =================================
+                        # KNOWN FAILURE
+                        # =================================
+                        #
+                        # Rules remain authoritative.
+                        # AI is diagnostic only.
+                        # =================================
+
+                        if rules_category != "UNKNOWN":
+
+                            classification = (
+                                classification.model_copy(
+                                    update={
+                                        "ai_root_cause":
+                                            ai_result.root_cause,
+
+                                        "ai_reasoning":
+                                            ai_result.reasoning,
+
+                                        "ai_confidence":
+                                            ai_result.confidence,
+
+                                        "ai_evidence":
+                                            ai_result.matched_evidence,
+                                    }
+                                )
+                            )
+
+                            span.set_attribute(
+                                "ai.role",
+                                "advisory",
+                            )
+
+                            span.set_attribute(
+                                "rules.category",
+                                rules_category,
+                            )
+
+                            if (
+                                ai_result.category
+                                != rules_category
+                            ):
+
+                                print(
+                                    "AI/rules disagreement: "
+                                    f"rules={rules_category}, "
+                                    f"ai={ai_result.category}"
+                                )
+
+                        # =================================
+                        # UNKNOWN FAILURE
+                        # =================================
+                        #
+                        # AI becomes fallback classifier.
+                        # Policy still controls remediation.
+                        # =================================
+
+                        else:
+
+                            classification = (
+                                FailureClassification(
+                                    category=(
+                                        ai_result.category
+                                    ),
+
+                                    action="ESCALATE",
+
+                                    reason=(
+                                        "AI diagnosis: "
+                                        f"{ai_result.root_cause}"
+                                    ),
+
+                                    confidence=(
+                                        ai_result.confidence
+                                    ),
+
+                                    matched_pattern=None,
+
+                                    source="ai",
+
+                                    ai_root_cause=(
+                                        ai_result.root_cause
+                                    ),
+
+                                    ai_reasoning=(
+                                        ai_result.reasoning
+                                    ),
+
+                                    ai_confidence=(
+                                        ai_result.confidence
+                                    ),
+
+                                    ai_evidence=(
+                                        ai_result.matched_evidence
+                                    ),
+                                )
+                            )
+
+                            span.set_attribute(
+                                "ai.role",
+                                "fallback_classifier",
+                            )
+
                     except Exception as exc:
 
                         span.record_exception(exc)
 
                         print(
-                            f"AI classification failed: "
+                            "AI diagnostic analysis failed: "
                             f"{exc}"
                         )
 
-                        classification = (
-                            FailureClassification(
-                                category="UNKNOWN",
-                                action="ESCALATE",
-                                reason=(
-                                    "Rules could not "
-                                    "classify the failure "
-                                    "and AI classification "
-                                    "failed."
-                                ),
-                                confidence=0.0,
-                                matched_pattern=None,
-                                source="ai_error",
-                                ai_root_cause=None,
-                                ai_reasoning=str(exc),
-                                ai_confidence=None,
-                                ai_evidence=[],
+                        # =================================
+                        # KNOWN FAILURE + AI UNAVAILABLE
+                        # =================================
+                        #
+                        # Keep deterministic classification.
+                        # Safe remediation can still continue.
+                        # =================================
+
+                        if rules_category != "UNKNOWN":
+
+                            classification = (
+                                classification.model_copy(
+                                    update={
+                                        "ai_root_cause": None,
+
+                                        "ai_reasoning": (
+                                            "AI analysis "
+                                            "unavailable: "
+                                            f"{exc}"
+                                        ),
+
+                                        "ai_confidence": None,
+
+                                        "ai_evidence": [],
+                                    }
+                                )
                             )
-                        )
+
+                        # =================================
+                        # UNKNOWN + AI UNAVAILABLE
+                        # =================================
+                        #
+                        # Cannot safely classify.
+                        # Escalate.
+                        # =================================
+
+                        else:
+
+                            classification = (
+                                FailureClassification(
+                                    category="UNKNOWN",
+
+                                    action="ESCALATE",
+
+                                    reason=(
+                                        "Rules could not "
+                                        "classify the failure "
+                                        "and AI analysis was "
+                                        "unavailable."
+                                    ),
+
+                                    confidence=0.0,
+
+                                    matched_pattern=None,
+
+                                    source="ai_error",
+
+                                    ai_root_cause=None,
+
+                                    ai_reasoning=str(exc),
+
+                                    ai_confidence=None,
+
+                                    ai_evidence=[],
+                                )
+                            )
 
             # =========================================
             # 5. CREATE INCIDENT
@@ -605,20 +745,24 @@ class IncidentService:
             # 7. AI AUDIT
             # =========================================
 
-            if ai_was_used:
+            if ai_was_used and ai_result is not None:
 
                 self.repository.add_audit_event(
                     incident_id=database_incident_id,
-                    event_type="AI_CLASSIFICATION",
+                    event_type="AI_ANALYSIS",
                     message=(
-                        f"category="
-                        f"{classification.category}; "
+                        f"rules_category="
+                        f"{rules_category}; "
+                        f"ai_category="
+                        f"{ai_result.category}; "
                         f"confidence="
-                        f"{classification.confidence}; "
+                        f"{ai_result.confidence}; "
                         f"root_cause="
-                        f"{classification.ai_root_cause or ''}; "
+                        f"{ai_result.root_cause}; "
                         f"reasoning="
-                        f"{classification.ai_reasoning or ''}"
+                        f"{ai_result.reasoning}; "
+                        f"evidence="
+                        f"{'; '.join(ai_result.matched_evidence)}"
                     ),
                 )
 
@@ -637,15 +781,18 @@ class IncidentService:
             )
 
             print(
-                f"Job         : {job_name}"
+                f"Job         : "
+                f"{job_name}"
             )
 
             print(
-                f"Build       : #{build_number}"
+                f"Build       : "
+                f"#{build_number}"
             )
 
             print(
-                f"Status      : {incident.status}"
+                f"Status      : "
+                f"{incident.status}"
             )
 
             print("-" * 60)
@@ -901,11 +1048,13 @@ class IncidentService:
             print("-" * 60)
 
             print(
-                f"Attempt     : {attempt}/3"
+                f"Attempt     : "
+                f"{attempt}/3"
             )
 
             print(
-                f"Allowed     : {allowed}"
+                f"Allowed     : "
+                f"{allowed}"
             )
 
             # =========================================

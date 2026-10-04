@@ -23,7 +23,7 @@
   "timezone": "browser",
   "title": "AutoHeal Reliability & AI Dashboard",
   "uid": "autoheal",
-  "version": 3,
+  "version": 4,
   "panels": [
     {
       "type": "stat",
@@ -188,7 +188,7 @@
     },
     {
       "type": "stat",
-      "title": "AI Classifications",
+      "title": "AI Analyses",
       "gridPos": {
         "h": 4,
         "w": 4,
@@ -203,7 +203,7 @@
         {
           "refId": "A",
           "format": "table",
-          "rawSql": "SELECT COUNT(*)::double precision AS value FROM incidents WHERE classifier_source = 'ai' AND $__timeFilter(created_at);"
+          "rawSql": "SELECT COUNT(*)::double precision AS value FROM incidents WHERE ai_root_cause IS NOT NULL AND $__timeFilter(created_at);"
         }
       ],
       "options": {
@@ -403,7 +403,7 @@
         {
           "refId": "A",
           "format": "table",
-          "rawSql": "SELECT COALESCE(ROUND(100.0 * COUNT(*) FILTER (WHERE classifier_source = 'ai') / NULLIF(COUNT(*), 0), 2), 0)::double precision AS value FROM incidents WHERE $__timeFilter(created_at);"
+          "rawSql": "SELECT COALESCE(ROUND(100.0 * COUNT(*) FILTER (WHERE ai_root_cause IS NOT NULL) / NULLIF(COUNT(*), 0), 2), 0)::double precision AS value FROM incidents WHERE $__timeFilter(created_at);"
         }
       ],
       "fieldConfig": {
@@ -585,7 +585,7 @@
         {
           "refId": "A",
           "format": "time_series",
-          "rawSql": "SELECT date_trunc('hour', created_at) AS time, AVG(ai_confidence)::double precision AS confidence FROM incidents WHERE classifier_source = 'ai' AND ai_confidence IS NOT NULL AND $__timeFilter(created_at) GROUP BY 1 ORDER BY 1;",
+          "rawSql": "SELECT date_trunc('hour', created_at) AS time, AVG(ai_confidence)::double precision AS confidence FROM incidents WHERE ai_confidence IS NOT NULL AND $__timeFilter(created_at) GROUP BY 1 ORDER BY 1;",
           "timeColumn": "time",
           "timeFormat": "YYYY-MM-DD HH24:MI:SS"
         }
@@ -637,7 +637,7 @@
         {
           "refId": "A",
           "format": "table",
-          "rawSql": "SELECT i.created_at AS \"time\", i.incident_id AS \"Incident\", i.job_name AS \"Job\", i.build_number AS \"Failed Build\", i.failure_category AS \"AI Category\", i.ai_confidence AS \"Confidence\", i.ai_root_cause AS \"AI Root Cause\", i.ai_reasoning AS \"AI Reasoning\" FROM incidents i WHERE (i.classifier_source = 'ai' OR i.ai_root_cause IS NOT NULL) AND $__timeFilter(i.created_at) ORDER BY i.created_at DESC LIMIT 20;"
+          "rawSql": "SELECT i.created_at AS \"time\", i.incident_id AS \"Incident\", i.job_name AS \"Job\", i.build_number AS \"Failed Build\", i.failure_category AS \"Final Category\", i.classifier_source AS \"Decision Source\", i.ai_confidence AS \"AI Confidence\", i.ai_root_cause AS \"AI Root Cause\", i.ai_reasoning AS \"AI Reasoning\" FROM incidents i WHERE i.ai_root_cause IS NOT NULL AND $__timeFilter(i.created_at) ORDER BY i.created_at DESC LIMIT 20;"
         }
       ]
     },
