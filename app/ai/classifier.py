@@ -1,40 +1,25 @@
 """
-Local Ollama diagnostic classifier.
+Focused Jenkins failure-context extractor + Ollama diagnostic client.
 
-AutoHeal uses this component only for diagnosis.
+Architecture:
 
-IMPORTANT ARCHITECTURE:
+    full Jenkins console
+        ├── deterministic AutoHeal classifier
+        ├── audit/persistence
+        └── focused evidence extractor -> Ollama
 
-AutoHeal still collects the complete Jenkins console log.
+Ollama is diagnostic only.
 
-The complete log is used by:
-    - deterministic failure classification
-    - incident persistence
-    - audit/debugging
-    - AutoHeal safety decisions
-
-However, the complete Jenkins console is NOT sent to Ollama.
-
-Before calling Ollama this module:
-
-    1. identifies the relevant failure evidence
-    2. identifies the Jenkins Pipeline stage when possible
-    3. extracts a small context window around the failure
-    4. limits the amount of data sent to the model
-    5. redacts common secrets
-
-This keeps the AI focused on the actual failure and reduces noise
-and hallucination risk on large production Jenkins pipelines.
-
-The AI does NOT control:
-    - policy
+It never selects:
     - remediation
-    - retries
+    - retry
+    - policy decisions
     - source-code changes
     - dependency changes
-
-The deterministic classifier and Policy Engine remain authoritative.
+    - infrastructure changes
 """
+
+from __future__ import annotations
 
 import json
 import os
@@ -44,34 +29,116 @@ from typing import Any
 import httpx
 
 from app.ai.models import AIClassification
-from app.ai.prompt import (
-    SYSTEM_PROMPT,
-    build_user_prompt,
-)
+from app.ai.prompt import SYSTEM_PROMPT, build_user_prompt
 
 
 class AIClassifier:
     """
-    Local Ollama-powered Jenkins failure diagnostic assistant.
+    Local Ollama diagnostic assistant.
 
-    The full Jenkins console is accepted by this class, but only a
-    targeted failure-stage excerpt is sent to Ollama.
+    The complete Jenkins console may be passed into this class,
+    but only focused failure evidence is sent to Ollama.
     """
 
     # =============================================================
-    # FAILURE SIGNALS
+    # BROAD FAILURE EVIDENCE SIGNALS
     # =============================================================
+    #
+    # These are NOT remediation rules.
+    #
+    # They only answer:
+    #
+    # "Which parts of the Jenkins console deserve attention?"
+    #
+    # This allows AutoHeal to support many thousands of possible
+    # failure messages without creating thousands of remediation rules.
+    #
 
     FAILURE_SIGNALS = (
-        "AssertionError",
+        # ---------------------------------------------------------
+        # Jenkins / Pipeline
+        # ---------------------------------------------------------
+
+        "script returned exit code",
+        "process apparently never started",
+        "hudson.AbortException",
+        "ERROR:",
+        "ERROR ",
+        "FATAL:",
         "FAILED",
-        "ERROR",
-        "Traceback",
+        "FAILURE",
+        "BUILD FAILED",
+        "BUILD FAILURE",
+        "ABORTED",
+
+        # ---------------------------------------------------------
+        # Python / application / tests
+        # ---------------------------------------------------------
+
+        "AssertionError",
+        "AssertionError:",
+        "Traceback (most recent call last)",
+        "Exception:",
+        "Error:",
+        "SyntaxError",
+        "TypeError",
+        "NameError",
+        "KeyError",
+        "ValueError",
+        "RuntimeError",
         "ModuleNotFoundError",
         "ImportError",
-        "PermissionError",
-        "FileNotFoundError",
-        "TimeoutError",
+
+        # Java
+        "NoClassDefFoundError",
+        "ClassNotFoundException",
+
+        # Test frameworks
+        "FAILED tests/",
+        "FAIL tests/",
+        "test failed",
+        "tests failed",
+
+        # ---------------------------------------------------------
+        # Dependency / package managers
+        # ---------------------------------------------------------
+
+        "Could not find a version that satisfies",
+        "No matching distribution found",
+        "ResolutionImpossible",
+        "dependency conflict",
+        "failed to resolve dependencies",
+        "npm ERR!",
+        "npm error",
+        "ERESOLVE",
+        "yarn error",
+        "pnpm ERR",
+        "Could not resolve",
+        "could not resolve",
+        "Gradle build failed",
+        "Could not resolve all files",
+        "Could not resolve dependencies",
+        "go: module",
+
+        # ---------------------------------------------------------
+        # Docker / containers
+        # ---------------------------------------------------------
+
+        "failed to solve:",
+        "failed to build",
+        "Cannot connect to the Docker daemon",
+        "Docker daemon",
+        "BuildKit",
+        "docker build",
+        "failed to create",
+        "failed to start container",
+        "OCI runtime",
+        "containerd",
+
+        # ---------------------------------------------------------
+        # Network / DNS / TLS
+        # ---------------------------------------------------------
+
         "Connection refused",
         "connection refused",
         "Connection reset",
@@ -79,28 +146,98 @@ class AIClassifier:
         "Connection timed out",
         "connection timed out",
         "ConnectTimeout",
+        "ReadTimeout",
         "Temporary failure in name resolution",
         "Could not resolve host",
+        "Could not resolve",
         "network is unreachable",
-        "Could not find a version that satisfies",
-        "No matching distribution found",
-        "ResolutionImpossible",
-        "dependency conflict",
-        "failed to resolve dependencies",
-        "failed to solve:",
-        "failed to build",
-        "command not found",
+        "Network is unreachable",
+        "Name or service not known",
+        "Failed to connect",
+        "timed out",
+        "SSL certificate",
+        "CERTIFICATE_VERIFY_FAILED",
+        "TLS handshake",
+        "HTTP/1.1 4",
+        "HTTP/1.1 5",
+        "HTTP/2 4",
+        "HTTP/2 5",
+
+        # ---------------------------------------------------------
+        # Registry / authentication
+        # ---------------------------------------------------------
+
         "unauthorized",
         "Unauthorized",
         "authentication required",
         "requested access to the resource is denied",
         "manifest unknown",
         "denied:",
-        "No such file",
+        "denied",
+        "failed to push",
+        "failed to pull",
+        "toomanyrequests",
+
+        # ---------------------------------------------------------
+        # Filesystem / workspace / Jenkins agent
+        # ---------------------------------------------------------
+
         "permission denied",
+        "PermissionError",
+        "No such file",
+        "No such file or directory",
+        "cannot create",
+        "unable to create",
         "agent is offline",
+        "channel is closed",
+        "remoting.ChannelClosedException",
         "workspace",
-        "script returned exit code",
+
+        # Jenkins Git / SCM
+        "Selected Git installation does not exist",
+        "Git installation does not exist",
+        "Git executable not found",
+        "git: command not found",
+        "The recommended git tool is: NONE",
+        "Could not checkout",
+        "Maximum checkout retry attempts reached",
+        "fatal: not a git repository",
+        "fatal: unable to access",
+        "couldn't find remote ref",
+        "checkout failed",
+
+        # ---------------------------------------------------------
+        # Kubernetes
+        # ---------------------------------------------------------
+
+        "ImagePullBackOff",
+        "ErrImagePull",
+        "CrashLoopBackOff",
+        "CreateContainerConfigError",
+        "FailedScheduling",
+        "Back-off restarting failed container",
+
+        # ---------------------------------------------------------
+        # Terraform
+        # ---------------------------------------------------------
+
+        "terraform: command not found",
+        "Error acquiring the state lock",
+        "Error locking state",
+        "Error: Failed to",
+        "Error: Invalid",
+        "Error: Unsupported",
+
+        # ---------------------------------------------------------
+        # Security / quality tools
+        # ---------------------------------------------------------
+
+        "SonarQube analysis failed",
+        "QUALITY GATE STATUS: ERROR",
+        "Quality Gate failed",
+        "Trivy scan failed",
+        "CRITICAL",
+        "HIGH vulnerabilities",
     )
 
     # =============================================================
@@ -115,10 +252,13 @@ class AIClassifier:
             "SyntaxError",
             "TypeError",
             "NameError",
+            "KeyError",
+            "ValueError",
             "ModuleNotFoundError",
             "ImportError",
             "test_",
         ),
+
         "DEPENDENCY_FAILURE": (
             "Could not find a version that satisfies",
             "No matching distribution found",
@@ -128,8 +268,11 @@ class AIClassifier:
             "version conflict",
             "failed to resolve dependencies",
             "pip install",
-            "ERROR:",
+            "npm ERR!",
+            "ERESOLVE",
+            "Could not resolve dependencies",
         ),
+
         "DOCKER_FAILURE": (
             "failed to solve:",
             "failed to build",
@@ -139,6 +282,7 @@ class AIClassifier:
             "failed to create",
             "docker build",
         ),
+
         "REGISTRY_FAILURE": (
             "requested access to the resource is denied",
             "unauthorized",
@@ -148,21 +292,23 @@ class AIClassifier:
             "denied:",
             "failed to push",
             "failed to pull",
+            "toomanyrequests",
             "registry",
         ),
+
         "NETWORK_FAILURE": (
             "Connection timed out",
             "ConnectTimeout",
-            "connection timeout",
+            "ReadTimeout",
+            "connection refused",
             "Temporary failure in name resolution",
             "network is unreachable",
-            "Connection refused",
             "Failed to connect",
-            "Could not resolve host",
+            "Could not resolve",
             "Name or service not known",
-            "HTTP/1.1 5",
-            "HTTP/2 5",
+            "CERTIFICATE_VERIFY_FAILED",
         ),
+
         "WORKSPACE_FAILURE": (
             "unable to create file",
             "workspace",
@@ -171,33 +317,31 @@ class AIClassifier:
             "Could not checkout",
             "Maximum checkout retry attempts reached",
             "fatal: cannot create directory",
-            "workspace",
+            "No such file or directory",
         ),
+
         "FLAKY_TEST": (
             "AUTOHEAL_FLAKY_TEST",
         ),
     }
 
     # =============================================================
-    # JENKINS STAGE MARKER
+    # JENKINS STAGE DETECTION
     # =============================================================
 
-    # Declarative Jenkins Pipeline normally emits lines similar to:
-    #
-    # [Pipeline] { (Test)
-    # [Pipeline] { (Docker Build)
-    #
-    # This lets us identify the stage containing the failure.
     STAGE_PATTERN = re.compile(
-        r"^\[Pipeline\]\s+\{\s+\((?P<stage>.+?)\)\s*$"
+        r"^\s*\[Pipeline\]\s+\{\s+\((?P<stage>.+?)\)\s*$"
     )
 
-    def __init__(self):
+    def __init__(self) -> None:
+
         self.enabled = (
             os.getenv(
                 "AI_ENABLED",
                 "false",
-            ).strip().lower()
+            )
+            .strip()
+            .lower()
             in {
                 "1",
                 "true",
@@ -206,18 +350,22 @@ class AIClassifier:
             }
         )
 
-        self.ollama_url = os.getenv(
-            "OLLAMA_URL",
-            "http://ollama:11434",
-        ).rstrip("/")
+        self.ollama_url = (
+            os.getenv(
+                "OLLAMA_URL",
+                "http://ollama:11434",
+            )
+            .rstrip("/")
+        )
 
         self.model = os.getenv(
             "OLLAMA_MODEL",
             "llama3.2:3b",
         )
 
-        # This is now the MAXIMUM amount of targeted failure
-        # context sent to Ollama, NOT the full Jenkins console size.
+        # Maximum targeted context sent to Ollama.
+        #
+        # This is NOT the maximum Jenkins log size.
         self.max_log_chars = int(
             os.getenv(
                 "AI_MAX_LOG_CHARS",
@@ -232,7 +380,7 @@ class AIClassifier:
             )
         )
 
-        # Number of lines before and after the selected failure.
+        # Context around the strongest failure.
         self.failure_context_lines = int(
             os.getenv(
                 "AI_FAILURE_CONTEXT_LINES",
@@ -240,11 +388,20 @@ class AIClassifier:
             )
         )
 
-        # Maximum size of a single extracted Jenkins stage.
+        # Maximum size of a selected stage.
         self.max_stage_chars = int(
             os.getenv(
                 "AI_STAGE_MAX_CHARS",
                 "8000",
+            )
+        )
+
+        # Prevent thousands of repeated errors from overwhelming
+        # the evidence selector.
+        self.max_failure_candidates = int(
+            os.getenv(
+                "AI_MAX_FAILURE_CANDIDATES",
+                "80",
             )
         )
 
@@ -257,18 +414,9 @@ class AIClassifier:
         log: str,
         rules_category: str | None = None,
     ) -> AIClassification:
-        """
-        Analyze a Jenkins console with Ollama.
-
-        IMPORTANT:
-
-        The complete Jenkins console may be passed into this method,
-        but the complete console is NOT sent to Ollama.
-
-        A targeted failure-stage excerpt is generated first.
-        """
 
         if not self.enabled:
+
             raise RuntimeError(
                 "AI analysis is disabled."
             )
@@ -276,10 +424,17 @@ class AIClassifier:
         original_log = log or ""
 
         if not original_log.strip():
+
             raise RuntimeError(
                 "Jenkins console log is empty."
             )
 
+        # IMPORTANT:
+        #
+        # The complete Jenkins console enters this method.
+        #
+        # The complete console is NEVER placed directly into
+        # the Ollama prompt.
         prepared_log = self._prepare_log(
             original_log,
             rules_category=rules_category,
@@ -292,7 +447,9 @@ class AIClassifier:
 
         print()
         print("=" * 72)
-        print("OLLAMA AI DIAGNOSTIC REQUEST")
+        print(
+            "OLLAMA AI DIAGNOSTIC REQUEST"
+        )
         print("=" * 72)
 
         print(
@@ -327,13 +484,14 @@ class AIClassifier:
         )
 
         print("-" * 72)
-        print("TARGETED LOG SENT TO OLLAMA")
+        print(
+            "TARGETED LOG SENT TO OLLAMA"
+        )
         print("-" * 72)
 
         print(prepared_log)
 
         print("-" * 72)
-        print()
 
         payload = {
             "model": self.model,
@@ -353,6 +511,7 @@ class AIClassifier:
         )
 
         try:
+
             async with httpx.AsyncClient(
                 timeout=httpx.Timeout(
                     self.timeout_seconds,
@@ -367,42 +526,22 @@ class AIClassifier:
 
                 response.raise_for_status()
 
-                data = response.json()
-
         except httpx.HTTPError as exc:
+
             raise RuntimeError(
                 f"Ollama request failed: {exc}"
             ) from exc
 
-        except Exception as exc:
-            raise RuntimeError(
-                f"Ollama communication error: {exc}"
-            ) from exc
+        body = response.json()
 
-        raw_response = data.get(
-            "response",
-            "",
+        raw_response = (
+            body.get("response")
+            if isinstance(body, dict)
+            else None
         )
 
-        if not isinstance(
-            raw_response,
-            str,
-        ):
-            raw_response = str(
-                raw_response
-            )
-
-        raw_response = raw_response.strip()
-
-        print()
-        print("=" * 72)
-        print("OLLAMA RAW RESPONSE")
-        print("=" * 72)
-        print(raw_response)
-        print("=" * 72)
-        print()
-
         if not raw_response:
+
             raise RuntimeError(
                 "Ollama returned an empty response."
             )
@@ -412,7 +551,7 @@ class AIClassifier:
         )
 
     # =============================================================
-    # TARGETED LOG EXTRACTION
+    # FOCUSED LOG EXTRACTION
     # =============================================================
 
     def _prepare_log(
@@ -420,72 +559,62 @@ class AIClassifier:
         log: str,
         rules_category: str | None = None,
     ) -> str:
-        """
-        Extract a small failure-focused section from the Jenkins log.
 
-        The complete Jenkins console stays inside AutoHeal.
-
-        Ollama receives only:
-
-            - the relevant Jenkins stage when identifiable
-            - the failure line
-            - surrounding context
-            - a small amount of stage context
-
-        This prevents large unrelated pipeline stages from being
-        supplied to the local model.
-        """
-
-        log = log or ""
-
-        lines = log.splitlines()
+        lines = (
+            log or ""
+        ).splitlines()
 
         if not lines:
+
             return (
                 "No Jenkins log lines were available."
             )
 
         # ---------------------------------------------------------
-        # 1. Locate failure candidates
+        # 1. Find candidate failure evidence
         # ---------------------------------------------------------
 
-        candidate_indexes = []
-
-        for index, line in enumerate(lines):
-
+        candidates = [
+            index
+            for index, line in enumerate(lines)
             if self._is_failure_line(
                 line,
-                rules_category=rules_category,
-            ):
-                candidate_indexes.append(
-                    index
-                )
+                rules_category,
+            )
+        ]
+
+        # Keep the most recent useful candidates.
+        candidates = candidates[
+            -self.max_failure_candidates:
+        ]
 
         # ---------------------------------------------------------
-        # 2. Choose the best failure line
+        # 2. Select strongest failure
         # ---------------------------------------------------------
 
         failure_index = (
             self._select_failure_index(
                 lines,
-                candidate_indexes,
+                candidates,
                 rules_category,
             )
         )
 
         # ---------------------------------------------------------
-        # 3. Identify Jenkins stage
+        # 3. Find Jenkins stage
         # ---------------------------------------------------------
 
-        stage_name, stage_start, stage_end = (
-            self._find_stage_for_failure(
-                lines,
-                failure_index,
-            )
+        (
+            stage_name,
+            stage_start,
+            stage_end,
+        ) = self._find_stage_for_failure(
+            lines,
+            failure_index,
         )
 
         # ---------------------------------------------------------
-        # 4. Extract stage/failure context
+        # 4. Stage-local context
         # ---------------------------------------------------------
 
         if stage_start is not None:
@@ -494,111 +623,139 @@ class AIClassifier:
                 stage_start:stage_end
             ]
 
-            # A stage may still be huge.
-            #
-            # Keep only a bounded section around the failure.
-            if (
-                sum(
-                    len(line) + 1
-                    for line in stage_lines
-                )
-                > self.max_stage_chars
-            ):
+            relative_failure_index = max(
+                0,
+                failure_index - stage_start,
+            )
 
-                stage_lines = (
-                    self._trim_stage_around_failure(
-                        stage_lines,
-                        failure_index - stage_start,
-                    )
+            stage_context = (
+                self._trim_stage_around_failure(
+                    stage_lines,
+                    relative_failure_index,
                 )
+            )
 
-            extracted = "\n".join(
-                stage_lines
+            stage_text = "\n".join(
+                stage_context
             )
 
         else:
 
-            # No Declarative Pipeline stage marker.
-            #
-            # Fall back to a narrow failure window.
-            start = max(
-                0,
-                failure_index
-                - self.failure_context_lines,
-            )
-
-            end = min(
-                len(lines),
-                failure_index
-                + self.failure_context_lines
-                + 1,
-            )
-
-            extracted = "\n".join(
-                lines[start:end]
+            stage_text = self._window(
+                lines,
+                failure_index,
+                self.failure_context_lines,
             )
 
         # ---------------------------------------------------------
-        # 5. Add focused failure window
+        # 5. Failure-centered context
         # ---------------------------------------------------------
 
-        focused_start = max(
+        window_start = max(
             0,
             failure_index
             - self.failure_context_lines,
         )
 
-        focused_end = min(
+        window_end = min(
             len(lines),
             failure_index
             + self.failure_context_lines
             + 1,
         )
 
-        focused = "\n".join(
+        # Never cross a known stage boundary.
+        if stage_start is not None:
+
+            window_start = max(
+                window_start,
+                stage_start,
+            )
+
+            window_end = min(
+                window_end,
+                stage_end,
+            )
+
+        focused_text = "\n".join(
             lines[
-                focused_start:focused_end
+                window_start:window_end
             ]
         )
 
         # ---------------------------------------------------------
-        # 6. Build AI evidence document
+        # 6. Avoid duplicate context
+        # ---------------------------------------------------------
+
+        if (
+            self._normalise_for_compare(
+                stage_text
+            )
+            ==
+            self._normalise_for_compare(
+                focused_text
+            )
+        ):
+
+            evidence_sections = [
+                stage_text
+            ]
+
+        else:
+
+            evidence_sections = [
+                stage_text,
+                focused_text,
+            ]
+
+        # ---------------------------------------------------------
+        # 7. Build AI evidence document
         # ---------------------------------------------------------
 
         output = [
             "===== AUTOHEAL TARGETED AI EVIDENCE =====",
             "",
             (
-                "The complete Jenkins console was analyzed "
-                "locally by AutoHeal."
+                "The complete Jenkins console was "
+                "analyzed locally by AutoHeal."
             ),
             (
-                "Only the following failure-focused evidence "
-                "is being provided to Ollama."
+                "Only deterministic, failure-focused "
+                "evidence is provided to Ollama."
             ),
             "",
-            f"Rules category: "
-            f"{rules_category or 'UNKNOWN'}",
-            "",
+            (
+                "Rules category: "
+                f"{rules_category or 'UNKNOWN'}"
+            ),
         ]
 
         if stage_name:
 
             output.extend(
                 [
-                    f"Failed Jenkins stage: "
-                    f"{stage_name}",
                     "",
+                    (
+                        "Failed Jenkins stage: "
+                        f"{stage_name}"
+                    ),
                 ]
             )
 
         output.extend(
             [
-                "===== FAILURE-STAGE CONTEXT =====",
-                extracted,
                 "",
-                "===== FAILURE-CENTERED CONTEXT =====",
-                focused,
+                "===== FAILURE EVIDENCE =====",
+                "",
+            ]
+        )
+
+        output.extend(
+            evidence_sections
+        )
+
+        output.extend(
+            [
                 "",
                 "===== END TARGETED EVIDENCE =====",
             ]
@@ -609,30 +766,22 @@ class AIClassifier:
         )
 
         # ---------------------------------------------------------
-        # 7. Redact secrets
+        # 8. Secret redaction
         # ---------------------------------------------------------
 
-        prepared = self._redact_secrets(
-            prepared
+        prepared = (
+            self._redact_secrets(
+                prepared
+            )
         )
 
         # ---------------------------------------------------------
-        # 8. Final hard limit
+        # 9. Final hard limit
         # ---------------------------------------------------------
 
-        if len(prepared) > self.max_log_chars:
-
-            prepared = (
-                prepared[
-                    :self.max_log_chars
-                ]
-                + "\n\n"
-                "===== AI CONTEXT TRUNCATED =====\n"
-                "Only the first portion of the targeted "
-                "failure evidence was sent to Ollama."
-            )
-
-        return prepared
+        return self._hard_limit(
+            prepared
+        )
 
     # =============================================================
     # FAILURE INDEX SELECTION
@@ -644,96 +793,113 @@ class AIClassifier:
         candidate_indexes: list[int],
         rules_category: str | None,
     ) -> int:
-        """
-        Choose the most useful failure line.
-
-        Category-specific strong signals receive higher scores.
-
-        This is deliberately deterministic.
-
-        Ollama is not asked to decide which part of the console
-        is relevant.
-        """
 
         if not candidate_indexes:
+
             return max(
                 0,
                 len(lines) - 1,
             )
 
-        signals = self.CATEGORY_SIGNALS.get(
-            rules_category or "",
-            self.FAILURE_SIGNALS,
+        signals = (
+            self.CATEGORY_SIGNALS.get(
+                rules_category or "",
+                self.FAILURE_SIGNALS,
+            )
         )
 
-        best_index = candidate_indexes[-1]
-        best_score = -1
+        best_index = (
+            candidate_indexes[-1]
+        )
+
+        best_score = -10**9
 
         for index in candidate_indexes:
 
             text = lines[index].strip()
 
+            lower = text.lower()
+
             score = 0
 
+            # Category-specific evidence.
             for signal in signals:
 
-                if signal.lower() in text.lower():
-                    score += 10
+                if (
+                    signal.lower()
+                    in lower
+                ):
 
-            # Strong traceback/assertion indicators.
-            if "AssertionError" in text:
-                score += 30
+                    score += 8
 
-            if "Traceback" in text:
-                score += 25
+            # Strong root-cause markers.
+            strong_markers = (
+                "assertionerror",
+                "traceback",
+                "syntaxerror",
+                "typeerror",
+                "modulenotfounderror",
+                "no matching distribution",
+                "could not find a version",
+                "resolutionimpossible",
+                "failed to solve:",
+                "cannot connect to the docker daemon",
+                "connection refused",
+                "could not resolve host",
+                "certificate_verify_failed",
+                "unauthorized",
+                "manifest unknown",
+                "selected git installation does not exist",
+                "git executable not found",
+                "agent is offline",
+                "imagepullbackoff",
+                "crashloopbackoff",
+                "failedscheduling",
+                "error acquiring the state lock",
+                "quality gate failed",
+                "trivy scan failed",
+            )
 
-            if (
-                "No matching distribution"
-                in text
+            for marker in strong_markers:
+
+                if marker in lower:
+
+                    score += 30
+
+            # Non-zero exit codes are useful, but weaker than
+            # the actual underlying error.
+            if re.search(
+                r"\b(?:exit|status|code)"
+                r"\s*[:=]?\s*[1-9]\d*\b",
+                lower,
             ):
-                score += 30
 
-            if (
-                "Could not find a version"
-                in text
-            ):
-                score += 30
+                score += 5
 
-            if "failed to solve:" in text.lower():
-                score += 30
-
-            if (
-                "requested access to the resource"
-                in text.lower()
-            ):
-                score += 30
-
-            if "connection refused" in text.lower():
-                score += 30
-
-            if (
-                "permission denied"
-                in text.lower()
-            ):
-                score += 20
-
-            # Generic Jenkins wrapper messages receive very low
-            # priority. We want the actual failure, not:
-            #
-            # script returned exit code 1
+            # Generic Jenkins wrappers should lose priority.
             if (
                 "script returned exit code"
-                in text.lower()
+                in lower
             ):
-                score -= 20
+
+                score -= 25
 
             if (
                 "process apparently never started"
-                in text.lower()
+                in lower
             ):
+
+                score -= 15
+
+            if lower.startswith(
+                "[pipeline]"
+            ):
+
                 score -= 10
 
-            if score > best_score:
+            # On equal scores, prefer the later occurrence.
+            if score >= best_score:
+
                 best_score = score
                 best_index = index
 
@@ -747,42 +913,27 @@ class AIClassifier:
         self,
         lines: list[str],
         failure_index: int,
-    ) -> tuple[str | None, int | None, int]:
-        """
-        Find the Jenkins Pipeline stage surrounding the failure.
+    ) -> tuple[
+        str | None,
+        int | None,
+        int,
+    ]:
 
-        Example:
+        markers = []
 
-            [Pipeline] { (Test)
+        for index, line in enumerate(
+            lines
+        ):
 
-            ...
-
-            AssertionError
-
-            ...
-
-            [Pipeline] }
-
-        Returns:
-
-            (
-                stage_name,
-                stage_start,
-                stage_end,
-            )
-        """
-
-        stage_markers = []
-
-        for index, line in enumerate(lines):
-
-            match = self.STAGE_PATTERN.match(
-                line.strip()
+            match = (
+                self.STAGE_PATTERN.match(
+                    line
+                )
             )
 
             if match:
 
-                stage_markers.append(
+                markers.append(
                     (
                         index,
                         match.group(
@@ -791,26 +942,27 @@ class AIClassifier:
                     )
                 )
 
-        if not stage_markers:
+        if not markers:
+
             return (
                 None,
                 None,
                 len(lines),
             )
 
-        previous_stage = None
+        previous = None
 
-        for marker_index, stage_name in stage_markers:
+        for marker in markers:
 
-            if marker_index <= failure_index:
-                previous_stage = (
-                    marker_index,
-                    stage_name,
-                )
+            if marker[0] <= failure_index:
+
+                previous = marker
+
             else:
+
                 break
 
-        if previous_stage is None:
+        if previous is None:
 
             return (
                 None,
@@ -818,16 +970,34 @@ class AIClassifier:
                 len(lines),
             )
 
-        stage_start = previous_stage[0]
-        stage_name = previous_stage[1]
+        stage_start = previous[0]
 
-        stage_end = len(lines)
+        stage_name = previous[1]
 
-        for marker_index, _ in stage_markers:
+        stage_end = len(
+            lines
+        )
 
-            if marker_index > stage_start:
+        # The next stage is a hard boundary.
+        #
+        # This prevents:
+        #
+        # Test failure
+        # +
+        # Docker stage
+        #
+        # from being combined into one AI context.
+        for marker_index, _ in markers:
 
-                stage_end = marker_index
+            if (
+                marker_index
+                > stage_start
+            ):
+
+                stage_end = (
+                    marker_index
+                )
+
                 break
 
         return (
@@ -837,7 +1007,7 @@ class AIClassifier:
         )
 
     # =============================================================
-    # STAGE TRIMMING
+    # STAGE CONTEXT TRIMMING
     # =============================================================
 
     def _trim_stage_around_failure(
@@ -845,55 +1015,75 @@ class AIClassifier:
         stage_lines: list[str],
         failure_offset: int,
     ) -> list[str]:
-        """
-        Trim a large stage while preserving the failure context.
-        """
 
-        context = self.failure_context_lines
-
-        start = max(
-            0,
-            failure_offset - context,
+        context = max(
+            5,
+            self.failure_context_lines,
         )
 
-        end = min(
-            len(stage_lines),
-            failure_offset + context + 1,
-        )
-
-        selected = stage_lines[
-            start:end
-        ]
-
-        # If still too large, shrink progressively.
-        while (
-            len(
-                "\n".join(selected)
-            )
-            > self.max_stage_chars
-            and len(selected) > 20
-        ):
-
-            context = max(
-                10,
-                context // 2,
-            )
+        while True:
 
             start = max(
                 0,
-                failure_offset - context,
+                failure_offset
+                - context,
             )
 
             end = min(
                 len(stage_lines),
-                failure_offset + context + 1,
+                failure_offset
+                + context
+                + 1,
             )
 
             selected = stage_lines[
                 start:end
             ]
 
-        return selected
+            if (
+                len(
+                    "\n".join(
+                        selected
+                    )
+                )
+                <= self.max_stage_chars
+            ):
+
+                return selected
+
+            if context <= 5:
+
+                return selected
+
+            context = max(
+                5,
+                context // 2,
+            )
+
+    # =============================================================
+    # SIMPLE WINDOW
+    # =============================================================
+
+    def _window(
+        self,
+        lines: list[str],
+        index: int,
+        radius: int,
+    ) -> str:
+
+        start = max(
+            0,
+            index - radius,
+        )
+
+        end = min(
+            len(lines),
+            index + radius + 1,
+        )
+
+        return "\n".join(
+            lines[start:end]
+        )
 
     # =============================================================
     # FAILURE DETECTION
@@ -904,39 +1094,79 @@ class AIClassifier:
         line: str,
         rules_category: str | None = None,
     ) -> bool:
-        """
-        Determine whether a Jenkins line is likely useful
-        diagnostic evidence.
-        """
 
         text = line.strip()
 
         if not text:
+
             return False
 
-        signals = self.CATEGORY_SIGNALS.get(
-            rules_category or "",
-            self.FAILURE_SIGNALS,
+        signals = (
+            self.CATEGORY_SIGNALS.get(
+                rules_category or "",
+                self.FAILURE_SIGNALS,
+            )
+        )
+
+        lower = text.lower()
+
+        if any(
+            signal.lower()
+            in lower
+            for signal in signals
+        ):
+
+            return True
+
+        # ---------------------------------------------------------
+        # Generic tool-independent failure patterns.
+        #
+        # These deliberately detect evidence without assigning
+        # remediation.
+        # ---------------------------------------------------------
+
+        generic_patterns = (
+            r"\b(?:fatal|panic|exception|error|failure|failed)\b",
+
+            r"\b(?:exit|status)"
+            r"\s+(?:code\s+)?[1-9]\d*\b",
+
+            r"\breturned\s+(?:a\s+)?"
+            r"non[- ]zero\b",
+
+            r"\bnon[- ]zero\s+exit\b",
+
+            r"\bcommand\s+failed\b",
+
+            r"\b(?:cannot|can't|couldn't|unable to)\b"
+            r".*\b(?:connect|access|create|open|find|"
+            r"resolve|start|pull|push)\b",
         )
 
         return any(
-            signal.lower()
-            in text.lower()
-            for signal in signals
+            re.search(
+                pattern,
+                text,
+                re.IGNORECASE,
+            )
+            for pattern in generic_patterns
         )
+
+    # =============================================================
+    # FAILURE COUNT
+    # =============================================================
 
     def _count_failure_lines(
         self,
         log: str,
     ) -> int:
-        """
-        Count diagnostic candidate lines.
-        """
 
         return sum(
             1
             for line in log.splitlines()
-            if self._is_failure_line(line)
+            if self._is_failure_line(
+                line
+            )
         )
 
     # =============================================================
@@ -947,57 +1177,79 @@ class AIClassifier:
         self,
         text: str,
     ) -> str:
-        """
-        Redact common credentials/secrets before sending evidence
-        to Ollama.
 
-        This is not a replacement for Jenkins credential masking.
-
-        It is an additional AI-input safety boundary.
-        """
-
-        patterns = [
+        patterns = (
             (
-                r"(?i)(Authorization:\s*Bearer\s+)"
+                r"(?i)"
+                r"(Authorization:\s*Bearer\s+)"
                 r"[^\s]+",
                 r"\1[REDACTED]",
             ),
             (
-                r"(?i)(Authorization:\s*Basic\s+)"
+                r"(?i)"
+                r"(Authorization:\s*Basic\s+)"
                 r"[^\s]+",
                 r"\1[REDACTED]",
             ),
             (
-                r"(?i)(api[_-]?key\s*[:=]\s*)"
+                r"(?i)"
+                r"(api[_-]?key\s*[:=]\s*)"
                 r"[^\s]+",
                 r"\1[REDACTED]",
             ),
             (
-                r"(?i)(token\s*[:=]\s*)"
+                r"(?i)"
+                r"(token\s*[:=]\s*)"
                 r"[^\s]+",
                 r"\1[REDACTED]",
             ),
             (
-                r"(?i)(password\s*[:=]\s*)"
+                r"(?i)"
+                r"(password\s*[:=]\s*)"
                 r"[^\s]+",
                 r"\1[REDACTED]",
             ),
             (
-                r"(?i)(secret\s*[:=]\s*)"
+                r"(?i)"
+                r"(secret\s*[:=]\s*)"
                 r"[^\s]+",
                 r"\1[REDACTED]",
             ),
             (
-                r"(?i)(access[_-]?key\s*[:=]\s*)"
+                r"(?i)"
+                r"(access[_-]?key\s*[:=]\s*)"
                 r"[^\s]+",
                 r"\1[REDACTED]",
             ),
             (
-                r"(?i)(private[_-]?key\s*[:=]\s*)"
+                r"(?i)"
+                r"(private[_-]?key\s*[:=]\s*)"
                 r"[^\s]+",
                 r"\1[REDACTED]",
             ),
-        ]
+            (
+                r"(?i)"
+                r"(AWS_SECRET_ACCESS_KEY\s*=\s*)"
+                r"[^\s]+",
+                r"\1[REDACTED]",
+            ),
+            (
+                r"(?i)"
+                r"(AWS_SESSION_TOKEN\s*=\s*)"
+                r"[^\s]+",
+                r"\1[REDACTED]",
+            ),
+            (
+                r"(?i)"
+                r"(ghp_[A-Za-z0-9_\-]+)",
+                r"[REDACTED_GITHUB_TOKEN]",
+            ),
+            (
+                r"(?i)"
+                r"(glpat-[A-Za-z0-9_\-]+)",
+                r"[REDACTED_GITLAB_TOKEN]",
+            ),
+        )
 
         result = text
 
@@ -1012,16 +1264,67 @@ class AIClassifier:
         return result
 
     # =============================================================
-    # RESPONSE PARSING
+    # FINAL AI CONTEXT LIMIT
+    # =============================================================
+
+    def _hard_limit(
+        self,
+        text: str,
+    ) -> str:
+
+        if (
+            len(text)
+            <= self.max_log_chars
+        ):
+
+            return text
+
+        # Preserve both the beginning and end.
+        #
+        # The end often contains the actual command failure,
+        # exit status or final exception.
+        head = max(
+            1000,
+            self.max_log_chars // 3,
+        )
+
+        tail = (
+            self.max_log_chars
+            - head
+        )
+
+        return (
+            text[:head]
+            + "\n\n"
+            "===== AI CONTEXT TRUNCATED =====\n"
+            "Middle of targeted evidence was "
+            "removed to enforce the AI input limit.\n\n"
+            + text[-tail:]
+        )
+
+    # =============================================================
+    # NORMALIZATION
+    # =============================================================
+
+    @staticmethod
+    def _normalise_for_compare(
+        text: str,
+    ) -> str:
+
+        return re.sub(
+            r"\s+",
+            " ",
+            text or "",
+        ).strip()
+
+    # =============================================================
+    # OLLAMA RESPONSE PARSING
     # =============================================================
 
     def _parse_response(
         self,
         raw_response: str,
     ) -> AIClassification:
-        """
-        Parse Ollama JSON safely.
-        """
 
         try:
 
@@ -1031,20 +1334,18 @@ class AIClassifier:
 
         except json.JSONDecodeError as exc:
 
-            recovered = (
+            data = (
                 self._extract_json_object(
                     raw_response
                 )
             )
 
-            if recovered is None:
+            if data is None:
 
                 raise RuntimeError(
                     "Ollama returned invalid JSON: "
                     f"{exc}"
                 ) from exc
-
-            data = recovered
 
         if not isinstance(
             data,
@@ -1052,27 +1353,35 @@ class AIClassifier:
         ):
 
             raise RuntimeError(
-                "Ollama JSON response was not an object."
+                "Ollama JSON response "
+                "was not an object."
             )
 
-        category = self._clean_string(
-            data.get(
-                "category",
-                "unknown",
+        category = (
+            self._clean_string(
+                data.get(
+                    "category",
+                    "unknown",
+                )
+            )
+            or "unknown"
+        )
+
+        root_cause = (
+            self._clean_string(
+                data.get(
+                    "root_cause",
+                    "",
+                )
             )
         )
 
-        root_cause = self._clean_string(
-            data.get(
-                "root_cause",
-                "",
-            )
-        )
-
-        reasoning = self._clean_string(
-            data.get(
-                "reasoning",
-                "",
+        reasoning = (
+            self._clean_string(
+                data.get(
+                    "reasoning",
+                    "",
+                )
             )
         )
 
@@ -1103,61 +1412,55 @@ class AIClassifier:
             )
         )
 
-        if not category:
-
-            category = "unknown"
-
-        if not root_cause:
-
-            root_cause = (
-                "The AI did not provide a root cause."
-            )
-
-        if not reasoning:
-
-            reasoning = (
-                "The AI did not provide additional reasoning."
-            )
-
         return AIClassification(
             category=category,
-            root_cause=root_cause,
-            reasoning=reasoning,
+            root_cause=(
+                root_cause
+                or
+                "The AI did not provide "
+                "a root cause."
+            ),
+            reasoning=(
+                reasoning
+                or
+                "The AI did not provide "
+                "additional reasoning."
+            ),
             confidence=confidence,
             matched_evidence=matched_evidence,
             recommendations=recommendations,
         )
 
     # =============================================================
-    # JSON HELPERS
+    # JSON EXTRACTION
     # =============================================================
 
+    @staticmethod
     def _extract_json_object(
-        self,
         text: str,
     ) -> dict[str, Any] | None:
-        """
-        Recover a JSON object from a response containing
-        additional text or Markdown fences.
-        """
 
-        start = text.find("{")
-        end = text.rfind("}")
+        start = text.find(
+            "{"
+        )
 
-        if start == -1 or end == -1:
+        end = text.rfind(
+            "}"
+        )
+
+        if (
+            start < 0
+            or end <= start
+        ):
+
             return None
-
-        if end <= start:
-            return None
-
-        candidate = text[
-            start:end + 1
-        ]
 
         try:
 
-            parsed = json.loads(
-                candidate
+            value = json.loads(
+                text[
+                    start:end + 1
+                ]
             )
 
         except json.JSONDecodeError:
@@ -1165,23 +1468,25 @@ class AIClassifier:
             return None
 
         if isinstance(
-            parsed,
+            value,
             dict,
         ):
 
-            return parsed
+            return value
 
         return None
 
+    # =============================================================
+    # STRING NORMALIZATION
+    # =============================================================
+
+    @staticmethod
     def _clean_string(
-        self,
         value: Any,
     ) -> str:
-        """
-        Normalize model string output.
-        """
 
         if value is None:
+
             return ""
 
         if isinstance(
@@ -1195,15 +1500,17 @@ class AIClassifier:
             value
         ).strip()
 
+    # =============================================================
+    # LIST NORMALIZATION
+    # =============================================================
+
+    @staticmethod
     def _normalize_list(
-        self,
         value: Any,
     ) -> list[str]:
-        """
-        Normalize model list output.
-        """
 
         if value is None:
+
             return []
 
         if isinstance(
@@ -1220,15 +1527,16 @@ class AIClassifier:
             list,
         ):
 
-            return [
-                str(value)
+            value = [
+                value
             ]
 
-        result = []
+        result: list[str] = []
 
         for item in value:
 
             if item is None:
+
                 continue
 
             text = str(
@@ -1243,13 +1551,14 @@ class AIClassifier:
 
         return result[:10]
 
+    # =============================================================
+    # CONFIDENCE NORMALIZATION
+    # =============================================================
+
+    @staticmethod
     def _normalize_confidence(
-        self,
         value: Any,
     ) -> float:
-        """
-        Normalize confidence into [0.0, 1.0].
-        """
 
         try:
 
@@ -1264,12 +1573,16 @@ class AIClassifier:
 
             return 0.0
 
-        # Handle models returning percentages.
+        # Models sometimes return:
+        #
+        # 90
+        #
+        # instead of:
+        #
+        # 0.90
         if confidence > 1.0:
 
-            confidence = (
-                confidence / 100.0
-            )
+            confidence /= 100.0
 
         return max(
             0.0,
