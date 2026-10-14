@@ -684,30 +684,21 @@ class AIClassifier:
         )
 
         # ---------------------------------------------------------
-        # 6. Avoid duplicate context
+        # 6. Keep AI evidence inside the failed stage
         # ---------------------------------------------------------
 
-        if (
-            self._normalise_for_compare(
-                stage_text
-            )
-            ==
-            self._normalise_for_compare(
-                focused_text
-            )
-        ):
+        if stage_name and stage_text.strip():
+            # Stage-local context is authoritative when available.
+            # Do not append a second window that could contain
+            # unrelated build stages.
+            evidence_sections = [stage_text]
 
-            evidence_sections = [
-                stage_text
-            ]
+        elif stage_text.strip():
+            evidence_sections = [stage_text]
 
         else:
-
-            evidence_sections = [
-                stage_text,
-                focused_text,
-            ]
-
+            evidence_sections = [focused_text]
+            
         # ---------------------------------------------------------
         # 7. Build AI evidence document
         # ---------------------------------------------------------
