@@ -60,8 +60,8 @@ POLICY_RULES = {
         max_attempts=1,
         requires_approval=False,
         reason= (   
-            "One cache-bypassing Docker rebuild is permitted. "
-            "Shared builder cache is not deleted.",
+            "One cache-bypassing Docker rebuild is permitted."
+            "Shared builder cache is not deleted."
         ),
     ),
     "REGISTRY_FAILURE": PolicyRule(
