@@ -1,11 +1,9 @@
 class DependencyRemediator:
-    """
-    Build a Jenkins-side dependency recovery plan.
+    """Request dependency recovery through the Jenkins runtime.
 
-    The shared library decides how to recreate the project's
-    dependency environment. For the included Python helper this
-    means recreating .venv and reinstalling the existing dependency
-    definition without changing versions or lockfiles.
+    The backend never executes commands on a Jenkins agent.
+    The Shared Library detects supported project manifests and
+    reinstalls dependencies without changing lockfiles.
     """
 
     async def remediate(self, job_name: str) -> dict:
@@ -17,8 +15,8 @@ class DependencyRemediator:
                 "AUTOHEAL_ACTION": "CLEAN_DEPENDENCY_ENV",
             },
             "message": (
-                "Dependency failure detected. The shared library will "
-                "recreate the dependency environment and reinstall "
-                "from the repository's existing dependency definition."
+                "Dependency failure detected. The AutoHeal Jenkins runtime "
+                "will recreate a supported dependency environment from the "
+                "existing manifest or lockfile before retrying."
             ),
         }
