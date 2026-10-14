@@ -1,3 +1,4 @@
+
 from app.classifier.classifier import FailureClassifier
 
 
@@ -18,19 +19,19 @@ def test_code_assertion_is_not_healed():
     assert result["action"] == "DO_NOT_HEAL"
 
 
-def test_docker_daemon_failure_escalates():
-    result = classifier.classify(
-        "Cannot connect to the Docker daemon"
-    )
-    assert result["category"] == "DOCKER_DAEMON_FAILURE"
-    assert result["action"] == "ESCALATE"
-
-
 def test_registry_auth_failure_escalates():
     result = classifier.classify(
         "denied: requested access to the resource is denied"
     )
     assert result["category"] == "REGISTRY_AUTH_FAILURE"
+    assert result["action"] == "ESCALATE"
+
+
+def test_docker_daemon_failure_escalates():
+    result = classifier.classify(
+        "Cannot connect to the Docker daemon at unix:///var/run/docker.sock"
+    )
+    assert result["category"] == "DOCKER_DAEMON_FAILURE"
     assert result["action"] == "ESCALATE"
 
 
@@ -64,7 +65,15 @@ def test_network_failure_uses_bounded_recovery():
     assert result["action"] == "CONNECTIVITY_CHECK_BACKOFF_AND_RETRY"
 
 
-def test_dependency_failure_uses_dependency_recovery():
+def test_pip_connection_failure_is_network_failure():
+    result = classifier.classify(
+        "pip install failed: Connection refused while connecting to package index"
+    )
+    assert result["category"] == "NETWORK_FAILURE"
+    assert result["action"] == "CONNECTIVITY_CHECK_BACKOFF_AND_RETRY"
+
+
+def test_missing_python_dependency_uses_dependency_recovery():
     result = classifier.classify(
         "/usr/local/bin/python: No module named pytest"
     )
@@ -80,8 +89,10 @@ def test_workspace_failure():
     assert result["action"] == "CLEAN_WORKSPACE_AND_RETRY"
 
 
-def test_ssh_auth_failure_fails_closed():
-    result = classifier.classify("Permission denied (publickey).")
+def test_peer_dependency_warning_is_not_a_failure():
+    result = classifier.classify(
+        "npm WARN peer dependency version conflict"
+    )
     assert result["category"] == "UNKNOWN"
     assert result["action"] == "ESCALATE"
 

@@ -1,3 +1,4 @@
+
 from dataclasses import dataclass
 
 
@@ -19,6 +20,8 @@ FAILURE_RULES = [
             r"AUTOHEAL_TEST_FAILURE.*FLAKY_TEST",
         ],
     ),
+
+    # These must be detected before generic Docker/network rules.
     FailureRule(
         category="REGISTRY_AUTH_FAILURE",
         action="ESCALATE",
@@ -29,6 +32,8 @@ FAILURE_RULES = [
             r"authentication required",
             r"incorrect username or password",
             r"insufficient_scope: authorization failed",
+            r"pull access denied",
+            r"authentication required.*registry",
         ],
     ),
     FailureRule(
@@ -39,12 +44,13 @@ FAILURE_RULES = [
             r"Cannot connect to the Docker daemon",
             r"permission denied while trying to connect to the Docker daemon",
             r"docker daemon.*not running",
+            r"Is the docker daemon running",
         ],
     ),
     FailureRule(
         category="DISK_FULL",
         action="ESCALATE",
-        reason="Disk exhaustion detected; privileged cleanup is not enabled.",
+        reason="Disk exhaustion detected; privileged agent cleanup is not enabled.",
         patterns=[
             r"No space left on device",
             r"\bENOSPC\b",
@@ -57,37 +63,53 @@ FAILURE_RULES = [
         action="ESCALATE",
         reason="Out-of-memory failure detected; resource resizing is not enabled.",
         patterns=[
-            r"OOMKilled",
+            r"\bOOMKilled\b",
             r"out of memory",
-            r"exit code 137",
+            r"\bexit code 137\b",
+            r"\bexit status 137\b",
             r"signal 9.*killed",
+            r"oom-kill",
         ],
     ),
     FailureRule(
         category="AGENT_FAILURE",
         action="ESCALATE",
-        reason="Jenkins agent failure detected; replacement is not enabled.",
+        reason="Jenkins agent failure detected; agent replacement is not enabled.",
         patterns=[
             r"agent .* went offline",
             r"agent .* is offline",
             r"computer .* is offline",
             r"channel .* is closed",
             r"lost connection to agent",
+            r"remoting\.ChannelClosedException",
+            r"agent was removed",
         ],
     ),
+
+    # Network evidence comes before dependency/code wrappers:
+    # e.g. pip can fail because its package index is unreachable.
     FailureRule(
-        category="CODE_FAILURE",
-        action="DO_NOT_HEAL",
-        reason="Application code or test assertion failed.",
+        category="NETWORK_FAILURE",
+        action="CONNECTIVITY_CHECK_BACKOFF_AND_RETRY",
+        reason="A potentially transient network failure was detected.",
         patterns=[
-            r"AssertionError",
-            r"E\s+AssertionError",
-            r"FAILED\s+.*test[_\w]*",
-            r"SyntaxError",
-            r"TypeError",
-            r"NameError",
+            r"Connection timed out",
+            r"ConnectTimeout",
+            r"connection timeout",
+            r"Temporary failure in name resolution",
+            r"network is unreachable",
+            r"Connection refused",
+            r"Failed to connect to .* port",
+            r"Could not resolve host",
+            r"Name or service not known",
+            r"HTTP/(?:1\.1|2) 5\d\d",
+            r"\b429 Too Many Requests\b",
+            r"\bETIMEDOUT\b",
+            r"\bECONNRESET\b",
+            r"Max retries exceeded.*(?:Connection|NameResolution|ConnectTimeout)",
         ],
     ),
+
     FailureRule(
         category="DEPENDENCY_FAILURE",
         action="CLEAN_DEPENDENCY_ENV_AND_RETRY",
@@ -101,6 +123,7 @@ FAILURE_RULES = [
             r"failed to resolve dependencies",
             r"dependency.*resolution.*failed",
             r"npm ERR!.*(?:ENOENT|ECONNRESET|EINTEGRITY)",
+            r"npm error.*(?:ENOENT|ECONNRESET|EINTEGRITY)",
             r"checksum mismatch",
             r"corrupt(?:ed)? archive",
         ],
@@ -108,13 +131,14 @@ FAILURE_RULES = [
     FailureRule(
         category="DOCKER_FAILURE",
         action="INVALIDATE_DOCKER_CACHE_AND_RETRY",
-        reason="A Docker build failure was detected.",
+        reason="A Docker build/cache failure was detected.",
         patterns=[
             r"failed to solve:",
             r"failed to build",
             r"docker build.*(?:error|failed)",
-            r"failed to create.*(?:task|container|endpoint)",
             r"BuildKit.*failed",
+            r"failed to compute cache key",
+            r"cache key.*failed",
         ],
     ),
     FailureRule(
@@ -130,29 +154,9 @@ FAILURE_RULES = [
         ],
     ),
     FailureRule(
-        category="NETWORK_FAILURE",
-        action="CONNECTIVITY_CHECK_BACKOFF_AND_RETRY",
-        reason="A transient network failure was detected.",
-        patterns=[
-            r"Connection timed out",
-            r"ConnectTimeout",
-            r"connection timeout",
-            r"Temporary failure in name resolution",
-            r"network is unreachable",
-            r"Connection refused",
-            r"Failed to connect to .* port",
-            r"Could not resolve host",
-            r"Name or service not known",
-            r"HTTP/(?:1\.1|2) 5\d\d",
-            r"\b429 Too Many Requests\b",
-            r"\bETIMEDOUT\b",
-            r"\bECONNRESET\b",
-        ],
-    ),
-    FailureRule(
         category="WORKSPACE_FAILURE",
         action="CLEAN_WORKSPACE_AND_RETRY",
-        reason="A workspace or filesystem failure was detected.",
+        reason="A workspace or checkout failure was detected.",
         patterns=[
             r"unable to create file",
             r"workspace.*permission denied",
@@ -162,6 +166,19 @@ FAILURE_RULES = [
             r"Maximum checkout retry attempts reached",
             r"fatal: cannot create directory.*permission denied",
             r"workspace.*corrupt",
+        ],
+    ),
+    FailureRule(
+        category="CODE_FAILURE",
+        action="DO_NOT_HEAL",
+        reason="Application code or test assertions must not be changed automatically.",
+        patterns=[
+            r"AssertionError",
+            r"E\s+AssertionError",
+            r"FAILED\s+.*test[_\w]*",
+            r"SyntaxError",
+            r"TypeError",
+            r"NameError",
         ],
     ),
 ]
