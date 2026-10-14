@@ -1,34 +1,37 @@
+
 import groovy.json.JsonOutput
 
 /**
  * AutoHeal Jenkins Shared Library.
  *
- * All recovery commands run on the Jenkins agent, not in the
- * Python backend. Actions are allowlisted; arbitrary shell commands
- * supplied by an AI model are never executed.
+ * The backend selects an allowlisted action.
+ * This library executes that action on the Jenkins agent.
  *
- * Consumer integration:
+ * Supported hooks:
  *   autoheal(stage: 'checkout')
  *   autoheal(stage: 'test')
  *   autoheal(stage: 'docker')
  *   autoheal(stage: 'registry')
  *
- * A normal failed build is reported from post { failure { ... } }.
+ * Normal failures are reported from post { failure { ... } }.
  */
 
 def call(Map config = [:]) {
     String action = (env.AUTOHEAL_ACTION ?: '').trim()
-    String stageName = (config.stage ?: '').toString().trim().toLowerCase()
+    String stageName = (config.stage ?: '')
+        .toString()
+        .trim()
+        .toLowerCase()
 
     if (!action || action == 'NONE') {
         if (currentBuild.currentResult == 'FAILURE') {
             try {
                 sendFailureWebhook(config)
             } catch (Exception ex) {
-                echo "AutoHeal webhook error (not masking original failure): ${ex.message}"
+                echo "AutoHeal: webhook notification failed; preserving original build failure: ${ex.message}"
             }
         } else {
-            echo 'AutoHeal: normal build; no recovery action.'
+            echo 'AutoHeal: no recovery action requested.'
         }
         return
     }
@@ -46,40 +49,51 @@ Stage  : ${stageName ?: 'unspecified'}
 """
 
     String requiredStage = requiredStageFor(action)
+
     if (requiredStage == 'unsupported') {
-        error("AutoHeal: unsupported action '${action}'. Refusing to execute it.")
+        error("AutoHeal: unsupported action '${action}'. Refusing execution.")
     }
 
     if (stageName != requiredStage) {
-        echo "AutoHeal: action '${action}' waits for stage '${requiredStage}'."
+        echo "AutoHeal: action '${action}' is waiting for stage '${requiredStage}'."
         return
     }
 
     if ((env.AUTOHEAL_ACTION_APPLIED ?: '') == 'true') {
-        echo 'AutoHeal: recovery already applied in this build; skipping duplicate hook.'
+        echo 'AutoHeal: action already executed in this build; skipping duplicate hook.'
         return
     }
 
-    applyAutoHealAction(action)
+    // Set the guard before executing the action. A failed action must
+    // not be accidentally executed again by another hook in this build.
     env.AUTOHEAL_ACTION_APPLIED = 'true'
+
+    applyAutoHealAction(action)
+
+    echo "AutoHeal: action '${action}' completed. The pipeline must now verify recovery."
 }
 
 private String requiredStageFor(String action) {
     switch (action) {
         case 'CLEAN_WORKSPACE':
-            return 'checkout'
-        case 'CLEAN_DEPENDENCY_ENV':
-            return 'test'
-        case 'INVALIDATE_DOCKER_CACHE':
-            return 'docker'
-        case 'RETRY_REGISTRY':
-            return 'registry'
-        case 'CONNECTIVITY_CHECK_BACKOFF':
-        case 'CONNECTIVITY_CHECK_BACKOFF_AND_RETRY':
-            return 'test'
+        case 'CLEAN_WORKSPACE_AND_RETRY':
         case 'RETRY':
         case 'RETRY_FLAKY_TEST':
             return 'checkout'
+
+        case 'CLEAN_DEPENDENCY_ENV':
+        case 'CLEAN_DEPENDENCY_ENV_AND_RETRY':
+        case 'CONNECTIVITY_CHECK_BACKOFF':
+        case 'CONNECTIVITY_CHECK_BACKOFF_AND_RETRY':
+            return 'test'
+
+        case 'INVALIDATE_DOCKER_CACHE':
+        case 'INVALIDATE_DOCKER_CACHE_AND_RETRY':
+            return 'docker'
+
+        case 'RETRY_REGISTRY':
+            return 'registry'
+
         default:
             return 'unsupported'
     }
@@ -90,19 +104,22 @@ private void applyAutoHealAction(String action) {
         case 'RETRY':
         case 'RETRY_FLAKY_TEST':
         case 'RETRY_REGISTRY':
-            echo "AutoHeal: controlled retry requested (${action})."
+            echo "AutoHeal: approved controlled retry requested (${action})."
             break
 
         case 'CLEAN_WORKSPACE':
-            echo 'AutoHeal: removing the current workspace before checkout.'
+        case 'CLEAN_WORKSPACE_AND_RETRY':
+            echo 'AutoHeal: deleting the current workspace before checkout.'
             deleteDir()
             break
 
         case 'CLEAN_DEPENDENCY_ENV':
+        case 'CLEAN_DEPENDENCY_ENV_AND_RETRY':
             remediateDependencies()
             break
 
         case 'INVALIDATE_DOCKER_CACHE':
+        case 'INVALIDATE_DOCKER_CACHE_AND_RETRY':
             remediateDockerCache()
             break
 
@@ -117,12 +134,10 @@ private void applyAutoHealAction(String action) {
 }
 
 /**
- * Rebuild the dependency environment from existing project definitions.
- * Never upgrades package versions or edits lockfiles.
+ * Recreate a supported dependency environment from an existing manifest.
+ * Does not change lockfiles or upgrade project dependency versions.
  */
 private void remediateDependencies() {
-    echo 'AutoHeal: detecting a supported dependency manifest.'
-
     sh(
         label: 'AutoHeal dependency recovery',
         script: '''
@@ -130,22 +145,23 @@ private void remediateDependencies() {
 
             if [ -f requirements.txt ]; then
                 command -v python >/dev/null 2>&1 || {
-                    echo "Python is unavailable for requirements.txt recovery" >&2
+                    echo "Python is unavailable." >&2
                     exit 20
                 }
 
                 rm -rf .venv
                 python -m venv .venv
+
                 .venv/bin/python -m pip install \
                     --disable-pip-version-check \
                     -r requirements.txt
 
                 .venv/bin/python -c \
-                    "import sys; print('AutoHeal Python environment ready:', sys.version)"
+                    "import sys; print('Recovered Python:', sys.version)"
 
             elif [ -f package.json ] && [ -f package-lock.json ]; then
                 command -v npm >/dev/null 2>&1 || {
-                    echo "npm is unavailable" >&2
+                    echo "npm is unavailable." >&2
                     exit 21
                 }
 
@@ -154,7 +170,7 @@ private void remediateDependencies() {
 
             elif [ -f package.json ] && [ -f yarn.lock ]; then
                 command -v yarn >/dev/null 2>&1 || {
-                    echo "yarn is unavailable" >&2
+                    echo "yarn is unavailable." >&2
                     exit 22
                 }
 
@@ -163,7 +179,7 @@ private void remediateDependencies() {
 
             elif [ -f package.json ] && [ -f pnpm-lock.yaml ]; then
                 command -v pnpm >/dev/null 2>&1 || {
-                    echo "pnpm is unavailable" >&2
+                    echo "pnpm is unavailable." >&2
                     exit 23
                 }
 
@@ -171,7 +187,7 @@ private void remediateDependencies() {
                 pnpm install --frozen-lockfile
 
             else
-                echo "No supported dependency manifest found; refusing unsafe recovery." >&2
+                echo "No supported dependency manifest found." >&2
                 exit 24
             fi
         '''
@@ -181,30 +197,32 @@ private void remediateDependencies() {
         env.PATH = "${pwd()}/.venv/bin:${env.PATH}"
     }
 
-    echo 'AutoHeal: dependency installation completed. The pipeline must verify it.'
+    echo 'AutoHeal: dependency recovery commands completed.'
 }
 
 /**
- * Remove only old Docker builder cache.
- * This is NOT a Docker daemon restart.
+ * Remove old Docker builder cache only.
+ * Does not restart the Docker daemon.
  */
 private void remediateDockerCache() {
     sh(
-        label: 'AutoHeal Docker builder-cache cleanup',
+        label: 'AutoHeal Docker cache recovery',
         script: '''
             set -eu
 
             command -v docker >/dev/null 2>&1 || {
-                echo "Docker CLI unavailable" >&2
+                echo "Docker CLI unavailable." >&2
                 exit 30
             }
 
             docker info >/dev/null 2>&1 || {
-                echo "Docker daemon unavailable; cache cleanup cannot repair it" >&2
+                echo "Docker daemon unavailable; escalating." >&2
                 exit 31
             }
 
-            docker builder prune --force --filter 'until=24h'
+            docker builder prune \
+                --force \
+                --filter 'until=24h'
         '''
     )
 
@@ -212,22 +230,22 @@ private void remediateDockerCache() {
 }
 
 /**
- * Bounded connectivity checks. This does not change DNS settings,
- * bypass authentication, or switch registries.
+ * Perform bounded outbound connectivity checks.
+ * Does not change DNS settings, bypass authentication, or switch registries.
  */
 private void remediateNetworkTransient() {
     sh(
-        label: 'AutoHeal network backoff',
+        label: 'AutoHeal bounded connectivity check',
         script: '''
             set -eu
 
             command -v curl >/dev/null 2>&1 || {
-                echo "curl is unavailable for connectivity verification" >&2
+                echo "curl is unavailable." >&2
                 exit 40
             }
 
             for delay in 2 4 8; do
-                echo "AutoHeal: waiting ${delay}s before connectivity check"
+                echo "AutoHeal: waiting ${delay}s before connectivity check."
                 sleep "$delay"
 
                 if curl \
@@ -236,20 +254,20 @@ private void remediateNetworkTransient() {
                     --show-error \
                     --max-time 10 \
                     https://github.com >/dev/null; then
-                    echo "AutoHeal: outbound HTTPS connectivity is available"
+                    echo "AutoHeal: outbound HTTPS connectivity is available."
                     exit 0
                 fi
             done
 
-            echo "AutoHeal: connectivity check failed after bounded backoff" >&2
+            echo "AutoHeal: connectivity remains unavailable after bounded checks." >&2
             exit 41
         '''
     )
 }
 
 /**
- * Notify the AutoHeal backend about a normal failed build.
- * Webhook errors must not overwrite the original pipeline failure.
+ * Notify the backend about a failed build.
+ * Notification errors must not hide the original pipeline failure.
  */
 private void sendFailureWebhook(Map config = [:]) {
     String baseUrl = (
@@ -261,16 +279,23 @@ private void sendFailureWebhook(Map config = [:]) {
     )
 
     String buildNumber = (env.BUILD_NUMBER ?: '0').toString()
-    if (!(buildNumber ==~ /\\d+/)) {
-        error('AutoHeal: invalid Jenkins build number.')
+
+
+
+    Integer buildNumber = currentBuild.number as Integer
+
+    if (buildNumber == null || buildNumber < 1) {
+        echo 'AutoHeal: cannot determine a valid Jenkins build number; skipping webhook.'
+        return
     }
 
-    String payload = JsonOutput.toJson([
+    String payload = groovy.json.JsonOutput.toJson([
         job_name: env.JOB_NAME ?: '',
-        build_number: buildNumber as Integer,
+        build_number: buildNumber,
         build_url: env.BUILD_URL ?: '',
         status: 'FAILURE'
-    ])
+   ])
+
 
     withCredentials([
         string(
@@ -283,7 +308,7 @@ private void sendFailureWebhook(Map config = [:]) {
             "AUTOHEAL_WEBHOOK_URL=${baseUrl}/webhook/jenkins"
         ]) {
             sh(
-                label: 'Notify AutoHeal',
+                label: 'Notify AutoHeal backend',
                 script: '''
                     set -eu
 
@@ -308,11 +333,11 @@ private void sendFailureWebhook(Map config = [:]) {
                             echo "AutoHeal webhook accepted."
                             ;;
                         *)
-                            echo "AutoHeal webhook failed with HTTP status: ${status_code}"
+                            echo "AutoHeal webhook returned HTTP status: ${status_code}"
                             if [ -s "$response_file" ]; then
                                 cat "$response_file"
                             fi
-                            # Do not fail this notification step: preserve the original build result.
+                            # Do not overwrite the original pipeline failure.
                             ;;
                     esac
                 '''
