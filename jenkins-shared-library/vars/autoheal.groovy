@@ -1,443 +1,322 @@
 import groovy.json.JsonOutput
 
 /**
- * AutoHeal Jenkins Shared Library
+ * AutoHeal Jenkins Shared Library.
  *
- * This library contains ONLY AutoHeal integration logic.
+ * All recovery commands run on the Jenkins agent, not in the
+ * Python backend. Actions are allowlisted; arbitrary shell commands
+ * supplied by an AI model are never executed.
  *
- * Generic CI/CD functions remain in the separate Shared library.
+ * Consumer integration:
+ *   autoheal(stage: 'checkout')
+ *   autoheal(stage: 'test')
+ *   autoheal(stage: 'docker')
+ *   autoheal(stage: 'registry')
  *
- * Responsibilities:
- *
- *   1. Detect AutoHeal retry builds.
- *   2. Apply AutoHeal-specific Jenkins actions.
- *   3. Send failed normal builds to AutoHeal backend.
- *   4. Prevent recursive webhook creation during retries.
+ * A normal failed build is reported from post { failure { ... } }.
  */
 
-
 def call(Map config = [:]) {
+    String action = (env.AUTOHEAL_ACTION ?: '').trim()
+    String stageName = (config.stage ?: '').toString().trim().toLowerCase()
 
-    String action =
-        (env.AUTOHEAL_ACTION ?: '').trim()
-
-
-    /*
-     * =========================================================
-     * NORMAL BUILD
-     * =========================================================
-     *
-     * "NONE" is treated exactly like an empty action.
-     *
-     * This is important because Jenkins may retain a previous
-     * parameter value or the demo job may explicitly use NONE.
-     */
-
-    if (
-        !action ||
-        action == 'NONE'
-    ) {
-
-        /*
-         * If the current build is already failing, this is a
-         * normal failed build and must be reported to AutoHeal.
-         */
-
-        if (
-            currentBuild.currentResult == 'FAILURE'
-        ) {
-
-            sendFailureWebhook(config)
-
-            return
+    if (!action || action == 'NONE') {
+        if (currentBuild.currentResult == 'FAILURE') {
+            try {
+                sendFailureWebhook(config)
+            } catch (Exception ex) {
+                echo "AutoHeal webhook error (not masking original failure): ${ex.message}"
+            }
+        } else {
+            echo 'AutoHeal: normal build; no recovery action.'
         }
-
-
-        echo(
-            'AutoHeal: normal build; no recovery action.'
-        )
-
         return
     }
 
-
-    /*
-     * =========================================================
-     * AUTOHEAL RETRY BUILD
-     * =========================================================
-     *
-     * Any real AutoHeal action means this build was triggered
-     * by the AutoHeal backend.
-     */
-
     env.AUTOHEAL_RETRY = 'true'
-
 
     echo """
 ========================================
-          AutoHeal Retry Build
+          AutoHeal Recovery
 ========================================
- Action : ${action}
- Build  : ${env.BUILD_NUMBER}
+Action : ${action}
+Build  : ${env.BUILD_NUMBER}
+Stage  : ${stageName ?: 'unspecified'}
 ========================================
 """
 
+    String requiredStage = requiredStageFor(action)
+    if (requiredStage == 'unsupported') {
+        error("AutoHeal: unsupported action '${action}'. Refusing to execute it.")
+    }
 
-    applyAutoHealAction(
-        action
-    )
+    if (stageName != requiredStage) {
+        echo "AutoHeal: action '${action}' waits for stage '${requiredStage}'."
+        return
+    }
+
+    if ((env.AUTOHEAL_ACTION_APPLIED ?: '') == 'true') {
+        echo 'AutoHeal: recovery already applied in this build; skipping duplicate hook.'
+        return
+    }
+
+    applyAutoHealAction(action)
+    env.AUTOHEAL_ACTION_APPLIED = 'true'
 }
 
-
-/**
- * Execute the Jenkins-side portion of an AutoHeal action.
- *
- * Generic CI/CD functionality remains in the consumer pipeline
- * and in the separate universal Shared library.
- */
-private void applyAutoHealAction(
-    String action
-) {
-
+private String requiredStageFor(String action) {
     switch (action) {
-
-
-        // =====================================================
-        // GENERIC RETRY
-        // =====================================================
-
-        case 'RETRY':
-
-            echo(
-                'AutoHeal: controlled retry requested.'
-            )
-
-            break
-
-
-        // =====================================================
-        // FLAKY TEST
-        // =====================================================
-
-        case 'RETRY_FLAKY_TEST':
-
-            echo(
-                'AutoHeal: flaky test retry requested.'
-            )
-
-            /*
-             * No destructive Jenkins-side operation is required.
-             * The pipeline simply reruns the normal test stages.
-             */
-
-            break
-
-
-        // =====================================================
-        // WORKSPACE
-        // =====================================================
-
         case 'CLEAN_WORKSPACE':
-
-            echo(
-                'AutoHeal: cleaning Jenkins workspace.'
-            )
-
-            deleteDir()
-
-            echo(
-                'AutoHeal: workspace cleanup completed.'
-            )
-
-            break
-
-
-        // =====================================================
-        // DEPENDENCY
-        // =====================================================
-
+            return 'checkout'
         case 'CLEAN_DEPENDENCY_ENV':
-
-            echo(
-                'AutoHeal: dependency environment cleanup requested.'
-            )
-
-            /*
-             * The Calculator demo pipeline performs the actual
-             * Python environment recreation.
-             */
-
-            break
-
-
-        // =====================================================
-        // DOCKER
-        // =====================================================
-
+            return 'test'
         case 'INVALIDATE_DOCKER_CACHE':
-
-            echo(
-                'AutoHeal: Docker cache invalidation requested.'
-            )
-
-            /*
-             * The Calculator demo pipeline performs the actual
-             * docker build --no-cache operation.
-             */
-
-            break
-
-
-        // =====================================================
-        // NETWORK
-        // =====================================================
-
-        case 'CONNECTIVITY_CHECK_BACKOFF':
-
-            echo(
-                'AutoHeal: checking Jenkins agent connectivity.'
-            )
-
-
-            sh '''
-                set -eu
-
-                echo "Checking GitHub connectivity..."
-
-                if command -v curl >/dev/null 2>&1; then
-
-                    curl \
-                        --fail \
-                        --silent \
-                        --show-error \
-                        --max-time 10 \
-                        https://github.com \
-                        >/dev/null
-
-                    echo "Connectivity check passed."
-
-                else
-
-                    echo "curl is not available."
-                    echo "Skipping connectivity check."
-
-                fi
-            '''
-
-            break
-
-
-        // =====================================================
-        // COMBINED NETWORK ACTION
-        // =====================================================
-
-        case 'CONNECTIVITY_CHECK_BACKOFF_AND_RETRY':
-
-            echo(
-                'AutoHeal: network recovery requested.'
-            )
-
-
-            /*
-             * The backend normally converts this into the
-             * single Jenkins parameter:
-             *
-             *     CONNECTIVITY_CHECK_BACKOFF
-             *
-             * This case is kept for compatibility with an
-             * older/manual invocation.
-             */
-
-            sh '''
-                set -eu
-
-                echo "Checking GitHub connectivity..."
-
-                if command -v curl >/dev/null 2>&1; then
-
-                    curl \
-                        --fail \
-                        --silent \
-                        --show-error \
-                        --max-time 10 \
-                        https://github.com \
-                        >/dev/null
-
-                    echo "Connectivity check passed."
-
-                else
-
-                    echo "curl is not available."
-                    echo "Skipping connectivity check."
-
-                fi
-            '''
-
-            break
-
-
-        // =====================================================
-        // REGISTRY
-        // =====================================================
-
+            return 'docker'
         case 'RETRY_REGISTRY':
-
-            echo(
-                'AutoHeal: registry retry requested.'
-            )
-
-            /*
-             * Actual authenticated docker push remains in the
-             * consumer pipeline.
-             */
-
-            break
-
-
-        // =====================================================
-        // UNKNOWN ACTION
-        // =====================================================
-
+            return 'registry'
+        case 'CONNECTIVITY_CHECK_BACKOFF':
+        case 'CONNECTIVITY_CHECK_BACKOFF_AND_RETRY':
+            return 'test'
+        case 'RETRY':
+        case 'RETRY_FLAKY_TEST':
+            return 'checkout'
         default:
-
-            error(
-                "AutoHeal: unsupported action '${action}'."
-            )
+            return 'unsupported'
     }
 }
 
+private void applyAutoHealAction(String action) {
+    switch (action) {
+        case 'RETRY':
+        case 'RETRY_FLAKY_TEST':
+        case 'RETRY_REGISTRY':
+            echo "AutoHeal: controlled retry requested (${action})."
+            break
+
+        case 'CLEAN_WORKSPACE':
+            echo 'AutoHeal: removing the current workspace before checkout.'
+            deleteDir()
+            break
+
+        case 'CLEAN_DEPENDENCY_ENV':
+            remediateDependencies()
+            break
+
+        case 'INVALIDATE_DOCKER_CACHE':
+            remediateDockerCache()
+            break
+
+        case 'CONNECTIVITY_CHECK_BACKOFF':
+        case 'CONNECTIVITY_CHECK_BACKOFF_AND_RETRY':
+            remediateNetworkTransient()
+            break
+
+        default:
+            error("AutoHeal: action '${action}' is not allowlisted.")
+    }
+}
 
 /**
- * Send a normal failed Jenkins build to AutoHeal.
+ * Rebuild the dependency environment from existing project definitions.
+ * Never upgrades package versions or edits lockfiles.
  */
-private void sendFailureWebhook(
-    Map config = [:]
-) {
+private void remediateDependencies() {
+    echo 'AutoHeal: detecting a supported dependency manifest.'
 
-    String baseUrl = (
+    sh(
+        label: 'AutoHeal dependency recovery',
+        script: '''
+            set -eu
 
-        config.url
+            if [ -f requirements.txt ]; then
+                command -v python >/dev/null 2>&1 || {
+                    echo "Python is unavailable for requirements.txt recovery" >&2
+                    exit 20
+                }
 
-        ?: env.AUTOHEAL_URL
+                rm -rf .venv
+                python -m venv .venv
+                .venv/bin/python -m pip install \
+                    --disable-pip-version-check \
+                    -r requirements.txt
 
-        ?: 'http://127.0.0.1:8000'
+                .venv/bin/python -c \
+                    "import sys; print('AutoHeal Python environment ready:', sys.version)"
 
-    ).replaceAll(
-        '/+$',
-        ''
+            elif [ -f package.json ] && [ -f package-lock.json ]; then
+                command -v npm >/dev/null 2>&1 || {
+                    echo "npm is unavailable" >&2
+                    exit 21
+                }
+
+                rm -rf node_modules
+                npm ci --no-audit --no-fund
+
+            elif [ -f package.json ] && [ -f yarn.lock ]; then
+                command -v yarn >/dev/null 2>&1 || {
+                    echo "yarn is unavailable" >&2
+                    exit 22
+                }
+
+                rm -rf node_modules
+                yarn install --frozen-lockfile
+
+            elif [ -f package.json ] && [ -f pnpm-lock.yaml ]; then
+                command -v pnpm >/dev/null 2>&1 || {
+                    echo "pnpm is unavailable" >&2
+                    exit 23
+                }
+
+                rm -rf node_modules
+                pnpm install --frozen-lockfile
+
+            else
+                echo "No supported dependency manifest found; refusing unsafe recovery." >&2
+                exit 24
+            fi
+        '''
     )
 
+    if (fileExists('requirements.txt')) {
+        env.PATH = "${pwd()}/.venv/bin:${env.PATH}"
+    }
 
-    String credentialId = (
+    echo 'AutoHeal: dependency installation completed. The pipeline must verify it.'
+}
 
-        config.secretCredentialId
+/**
+ * Remove only old Docker builder cache.
+ * This is NOT a Docker daemon restart.
+ */
+private void remediateDockerCache() {
+    sh(
+        label: 'AutoHeal Docker builder-cache cleanup',
+        script: '''
+            set -eu
 
-        ?: 'autoheal-webhook-secret'
+            command -v docker >/dev/null 2>&1 || {
+                echo "Docker CLI unavailable" >&2
+                exit 30
+            }
+
+            docker info >/dev/null 2>&1 || {
+                echo "Docker daemon unavailable; cache cleanup cannot repair it" >&2
+                exit 31
+            }
+
+            docker builder prune --force --filter 'until=24h'
+        '''
     )
 
+    echo 'AutoHeal: eligible Docker builder cache removed.'
+}
 
-    String payload = JsonOutput.toJson([
+/**
+ * Bounded connectivity checks. This does not change DNS settings,
+ * bypass authentication, or switch registries.
+ */
+private void remediateNetworkTransient() {
+    sh(
+        label: 'AutoHeal network backoff',
+        script: '''
+            set -eu
 
-        job_name:
-            env.JOB_NAME,
+            command -v curl >/dev/null 2>&1 || {
+                echo "curl is unavailable for connectivity verification" >&2
+                exit 40
+            }
 
-        build_number:
-            (
-                env.BUILD_NUMBER ?: '0'
-            ) as Integer,
+            for delay in 2 4 8; do
+                echo "AutoHeal: waiting ${delay}s before connectivity check"
+                sleep "$delay"
 
-        build_url:
-            env.BUILD_URL ?: '',
-
-        status:
-            'FAILURE'
-    ])
-
-
-    echo """
-========================================
-      AutoHeal Failure Notification
-========================================
- Job   : ${env.JOB_NAME}
- Build : ${env.BUILD_NUMBER}
-========================================
-"""
-
-
-    withCredentials([
-
-        string(
-
-            credentialsId:
-                credentialId,
-
-            variable:
-                'AUTOHEAL_WEBHOOK_SECRET'
-        )
-    ]) {
-
-
-        withEnv([
-
-            "AUTOHEAL_PAYLOAD=${payload}",
-
-            "AUTOHEAL_WEBHOOK_URL=${baseUrl}/webhook/jenkins"
-        ]) {
-
-
-            sh '''
-                set -eu
-
-                response_file="/tmp/autoheal-response.json"
-
-                rm -f "$response_file"
-
-
-                status_code=$(curl \
+                if curl \
+                    --fail \
                     --silent \
                     --show-error \
-                    --output "$response_file" \
-                    --write-out '%{http_code}' \
-                    --connect-timeout 5 \
-                    --max-time 15 \
-                    --request POST \
-                    --header 'Content-Type: application/json' \
-                    --header "X-AutoHeal-Secret: ${AUTOHEAL_WEBHOOK_SECRET}" \
-                    --data "$AUTOHEAL_PAYLOAD" \
-                    "$AUTOHEAL_WEBHOOK_URL")
+                    --max-time 10 \
+                    https://github.com >/dev/null; then
+                    echo "AutoHeal: outbound HTTPS connectivity is available"
+                    exit 0
+                fi
+            done
 
+            echo "AutoHeal: connectivity check failed after bounded backoff" >&2
+            exit 41
+        '''
+    )
+}
 
-                echo \
-                    "AutoHeal HTTP status: ${status_code}"
+/**
+ * Notify the AutoHeal backend about a normal failed build.
+ * Webhook errors must not overwrite the original pipeline failure.
+ */
+private void sendFailureWebhook(Map config = [:]) {
+    String baseUrl = (
+        config.url ?: env.AUTOHEAL_URL ?: 'http://127.0.0.1:8000'
+    ).replaceAll('/+$', '')
 
+    String credentialId = (
+        config.secretCredentialId ?: 'autoheal-webhook-secret'
+    )
 
-                case "$status_code" in
+    String buildNumber = (env.BUILD_NUMBER ?: '0').toString()
+    if (!(buildNumber ==~ /\\d+/)) {
+        error('AutoHeal: invalid Jenkins build number.')
+    }
 
-                    200|202)
+    String payload = JsonOutput.toJson([
+        job_name: env.JOB_NAME ?: '',
+        build_number: buildNumber as Integer,
+        build_url: env.BUILD_URL ?: '',
+        status: 'FAILURE'
+    ])
 
-                        echo \
-                            "AutoHeal webhook accepted."
+    withCredentials([
+        string(
+            credentialsId: credentialId,
+            variable: 'AUTOHEAL_WEBHOOK_SECRET'
+        )
+    ]) {
+        withEnv([
+            "AUTOHEAL_PAYLOAD=${payload}",
+            "AUTOHEAL_WEBHOOK_URL=${baseUrl}/webhook/jenkins"
+        ]) {
+            sh(
+                label: 'Notify AutoHeal',
+                script: '''
+                    set -eu
 
-                        ;;
+                    response_file="$(mktemp)"
+                    trap 'rm -f "$response_file"' EXIT
 
-                    *)
+                    status_code=$(curl \
+                        --silent \
+                        --show-error \
+                        --output "$response_file" \
+                        --write-out '%{http_code}' \
+                        --connect-timeout 5 \
+                        --max-time 15 \
+                        --request POST \
+                        --header 'Content-Type: application/json' \
+                        --header "X-AutoHeal-Secret: ${AUTOHEAL_WEBHOOK_SECRET}" \
+                        --data "$AUTOHEAL_PAYLOAD" \
+                        "$AUTOHEAL_WEBHOOK_URL" || true)
 
-                        echo \
-                            "AutoHeal webhook failed."
-
-                        if [ -f "$response_file" ]; then
-                            cat "$response_file"
-                        fi
-
-                        exit 1
-
-                        ;;
-
-                esac
-
-
-                rm -f "$response_file"
-            '''
+                    case "$status_code" in
+                        200|202)
+                            echo "AutoHeal webhook accepted."
+                            ;;
+                        *)
+                            echo "AutoHeal webhook failed with HTTP status: ${status_code}"
+                            if [ -s "$response_file" ]; then
+                                cat "$response_file"
+                            fi
+                            # Do not fail this notification step: preserve the original build result.
+                            ;;
+                    esac
+                '''
+            )
         }
     }
 }
