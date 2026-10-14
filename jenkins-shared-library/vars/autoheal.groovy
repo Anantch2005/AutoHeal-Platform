@@ -282,16 +282,16 @@ private void sendFailureWebhook(Map config = [:]) {
 
 
 
-    Integer buildNumber = currentBuild.number as Integer
+    Integer autoHealBuildNumber = currentBuild.number as Integer
 
-    if (buildNumber == null || buildNumber < 1) {
+    if (autoHealBuildNumber == null || autoHealBuildNumber < 1) {
         echo 'AutoHeal: cannot determine a valid Jenkins build number; skipping webhook.'
         return
     }
 
     String payload = groovy.json.JsonOutput.toJson([
         job_name: env.JOB_NAME ?: '',
-        build_number: buildNumber,
+        build_number: autoHealBuildNumber,
         build_url: env.BUILD_URL ?: '',
         status: 'FAILURE'
    ])
