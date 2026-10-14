@@ -27,7 +27,7 @@ POLICY_RULES = {
         risk_level="LOW",
         allowed=True,
         action="CONNECTIVITY_CHECK_BACKOFF_AND_RETRY",
-        max_attempts=2,
+        max_attempts=1,
         requires_approval=False,
         reason="Bounded connectivity checks and backoff are permitted.",
     ),
@@ -59,7 +59,10 @@ POLICY_RULES = {
         action="INVALIDATE_DOCKER_CACHE_AND_RETRY",
         max_attempts=1,
         requires_approval=False,
-        reason="One Docker builder-cache cleanup is permitted.",
+        reason= (   
+            "One cache-bypassing Docker rebuild is permitted. "
+            "Shared builder cache is not deleted.",
+        ),
     ),
     "REGISTRY_FAILURE": PolicyRule(
         category="REGISTRY_FAILURE",

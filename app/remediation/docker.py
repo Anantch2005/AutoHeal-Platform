@@ -16,7 +16,9 @@ class DockerRemediator:
                 "AUTOHEAL_ACTION": "INVALIDATE_DOCKER_CACHE",
             },
             "message": (
-                "Docker failure detected. The shared Docker build step "
-                "will rebuild the affected image without cache."
+                "Docker build failure detected. AutoHeal will request "
+                "one cache-bypassing rebuild. The Docker daemon must "
+                "be available, and the recovery build must pass "
+                "verification before the incident is marked healed."
             ),
         }

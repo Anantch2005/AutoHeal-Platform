@@ -103,3 +103,51 @@ def test_unknown_failure_escalates():
     )
     assert result["category"] == "UNKNOWN"
     assert result["action"] == "ESCALATE"
+
+def test_real_pip_connection_refused_is_network_failure():
+    log = """
+    pip._vendor.urllib3.exceptions.NewConnectionError:
+    Failed to establish a new connection: [Errno 111] Connection refused
+    """
+
+    result = classifier.classify(log)
+
+    assert result["category"] == "NETWORK_FAILURE"
+    assert result["action"] == "CONNECTIVITY_CHECK_BACKOFF_AND_RETRY"
+
+
+def test_real_workspace_permission_error_is_workspace_failure():
+    log = """
+    AUTOHEAL_WORKSPACE_FAILURE: workspace permission denied while writing probe
+    touch: cannot touch '.autoheal-workspace-probe/locked/probe.txt':
+    Permission denied
+    """
+
+    result = classifier.classify(log)
+
+    assert result["category"] == "WORKSPACE_FAILURE"
+    assert result["action"] == "CLEAN_WORKSPACE_AND_RETRY"
+
+
+def test_docker_cache_key_failure_uses_cache_bypass():
+    log = """
+    ERROR: failed to solve: failed to compute cache key:
+    failed to calculate checksum of ref
+    """
+
+    result = classifier.classify(log)
+
+    assert result["category"] == "DOCKER_FAILURE"
+    assert result["action"] == "INVALIDATE_DOCKER_CACHE_AND_RETRY"
+
+
+def test_code_assertion_remains_non_remediable():
+    log = """
+    Traceback (most recent call last):
+      AssertionError: Controlled code-failure test
+    """
+
+    result = classifier.classify(log)
+
+    assert result["category"] == "CODE_FAILURE"
+    assert result["action"] == "DO_NOT_HEAL"

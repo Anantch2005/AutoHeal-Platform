@@ -84,7 +84,7 @@ def test_network_recovery_has_bounded_attempts():
     )
     assert decision.allowed is True
     assert decision.action == "CONNECTIVITY_CHECK_BACKOFF_AND_RETRY"
-    assert decision.max_attempts == 2
+    assert decision.max_attempts == 1
 
 
 def test_workspace_recovery_allows_one_attempt():
