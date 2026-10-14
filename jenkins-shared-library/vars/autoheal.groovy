@@ -79,12 +79,12 @@ private String requiredStageFor(String action) {
         case 'CLEAN_WORKSPACE_AND_RETRY':
         case 'RETRY':
         case 'RETRY_FLAKY_TEST':
+        case 'CONNECTIVITY_CHECK_BACKOFF':
+        case 'CONNECTIVITY_CHECK_BACKOFF_AND_RETRY':
             return 'checkout'
 
         case 'CLEAN_DEPENDENCY_ENV':
         case 'CLEAN_DEPENDENCY_ENV_AND_RETRY':
-        case 'CONNECTIVITY_CHECK_BACKOFF':
-        case 'CONNECTIVITY_CHECK_BACKOFF_AND_RETRY':
             return 'test'
 
         case 'INVALIDATE_DOCKER_CACHE':
@@ -109,7 +109,8 @@ private void applyAutoHealAction(String action) {
 
         case 'CLEAN_WORKSPACE':
         case 'CLEAN_WORKSPACE_AND_RETRY':
-            echo 'AutoHeal: deleting the current workspace before checkout.'
+            echo 'AutoHeal: restoring owner permissions where possible, then cleaning the workspace.'
+            makeWorkspaceWritable()
             deleteDir()
             break
 
@@ -204,9 +205,10 @@ private void remediateDependencies() {
  * Remove old Docker builder cache only.
  * Does not restart the Docker daemon.
  */
+
 private void remediateDockerCache() {
     sh(
-        label: 'AutoHeal Docker cache recovery',
+        label: 'AutoHeal Docker daemon preflight',
         script: '''
             set -eu
 
@@ -219,48 +221,98 @@ private void remediateDockerCache() {
                 echo "Docker daemon unavailable; escalating." >&2
                 exit 31
             }
-
-            docker builder prune \
-                --force \
-                --filter 'until=24h'
         '''
     )
 
-    echo 'AutoHeal: eligible Docker builder cache removed.'
+    env.AUTOHEAL_DISABLE_BUILD_CACHE = 'true'
+
+    echo 'AutoHeal: cache-bypass flag enabled for the next Docker build.'
 }
+
 
 /**
  * Perform bounded outbound connectivity checks.
  * Does not change DNS settings, bypass authentication, or switch registries.
  */
+
 private void remediateNetworkTransient() {
     sh(
         label: 'AutoHeal bounded connectivity check',
         script: '''
             set -eu
 
-            command -v curl >/dev/null 2>&1 || {
-                echo "curl is unavailable." >&2
-                exit 40
-            }
+            python3 - <<'PY'
+import time
+import urllib.request
 
-            for delay in 2 4 8; do
-                echo "AutoHeal: waiting ${delay}s before connectivity check."
-                sleep "$delay"
+targets = (
+    "https://github.com/",
+    "https://pypi.org/simple/pytest/",
+)
 
-                if curl \
-                    --fail \
-                    --silent \
-                    --show-error \
-                    --max-time 10 \
-                    https://github.com >/dev/null; then
-                    echo "AutoHeal: outbound HTTPS connectivity is available."
-                    exit 0
-                fi
-            done
+delays = (2, 4, 8)
 
-            echo "AutoHeal: connectivity remains unavailable after bounded checks." >&2
-            exit 41
+for target in targets:
+    last_error = None
+
+    for delay in delays:
+        print(
+            f"AutoHeal: checking {target} "
+            f"after a {delay}s backoff."
+        )
+        time.sleep(delay)
+
+        try:
+            request = urllib.request.Request(
+                target,
+                headers={
+                    "User-Agent": "AutoHeal-Connectivity-Check"
+                },
+            )
+
+            with urllib.request.urlopen(
+                request,
+                timeout=10,
+            ) as response:
+                if 200 <= response.status < 400:
+                    print(
+                        f"AutoHeal: connectivity verified for {target}."
+                    )
+                    break
+
+                raise RuntimeError(
+                    f"Unexpected HTTP status: {response.status}"
+                )
+
+        except Exception as exc:
+            last_error = exc
+            print(
+                f"AutoHeal: connectivity check failed: {exc}"
+            )
+    else:
+        print(
+            f"AutoHeal: connectivity remains unavailable for "
+            f"{target}: {last_error}",
+            flush=True,
+        )
+        raise SystemExit(41)
+
+print("AutoHeal: required connectivity checks passed.")
+PY
+        '''
+    )
+}
+
+
+private void makeWorkspaceWritable() {
+    sh(
+        label: 'AutoHeal workspace permission recovery',
+        script: '''
+            set -eu
+
+            # Only changes owner permissions in this job's workspace.
+            # It does not change ownership or operate outside the workspace.
+            chmod -R u+rwX . 2>/dev/null || true
         '''
     )
 }
