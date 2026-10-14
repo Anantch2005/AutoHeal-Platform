@@ -33,8 +33,12 @@ jobs:
             --build \
             --rm \
             --no-deps \
+            -e WEBHOOK_SECRET=change-me \
             -e DATABASE_URL=sqlite:////tmp/autoheal-test.db \
             -e AI_ENABLED=false \
+            -e OTEL_SDK_DISABLED=true \
+            -e OTEL_METRICS_EXPORTER=none \
+            -e OTEL_TRACES_EXPORTER=none \
             autoheal \
             python -m pytest -q -p no:cacheprovider
 
