@@ -1,8 +1,13 @@
+
 import asyncio
+import logging
+from urllib.parse import quote
 
 import httpx
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class JenkinsBuild:
@@ -43,6 +48,19 @@ class JenkinsCollector:
 
         self.timeout = 30
 
+    def _job_base_url(self, job_name: str) -> str:
+        parts = [
+            part.strip()
+            for part in job_name.strip("/").split("/")
+            if part.strip()
+        ]
+        if not parts:
+            raise ValueError("Jenkins job name cannot be empty.")
+        encoded_path = "/".join(
+            f"job/{quote(part, safe='')}" for part in parts
+        )
+        return f"{self.base_url}/{encoded_path}"
+
     async def get_build_info(
         self,
         job_name: str,
@@ -58,15 +76,9 @@ class JenkinsCollector:
             /job/<job>/<build>/consoleText
         """
 
-        metadata_url = (
-            f"{self.base_url}/job/"
-            f"{job_name}/{build_number}/api/json"
-        )
-
-        console_url = (
-            f"{self.base_url}/job/"
-            f"{job_name}/{build_number}/consoleText"
-        )
+        job_base_url = self._job_base_url(job_name)
+        metadata_url = f"{job_base_url}/{build_number}/api/json"
+        console_url = f"{job_base_url}/{build_number}/consoleText"
 
         async with httpx.AsyncClient(
             auth=self.auth,
@@ -93,8 +105,7 @@ class JenkinsCollector:
 
             url = data.get(
                 "url",
-                f"{self.base_url}/job/"
-                f"{job_name}/{build_number}/",
+                f"{job_base_url}/{build_number}/",
             )
 
             # =====================================================
@@ -119,65 +130,16 @@ class JenkinsCollector:
                 "No console output was returned by Jenkins."
             )
 
-        print()
-        print("=" * 72)
-        print("JENKINS EVIDENCE COLLECTION")
-        print("=" * 72)
-        print(
-            f"Job             : {job_name}"
+        # Log only metadata. Raw Jenkins output can contain secrets and is
+        # persisted for controlled diagnosis; it must not be dumped to stdout.
+        logger.info(
+            "Collected Jenkins evidence: job=%s build=%s result=%s "
+            "console_chars=%d",
+            job_name,
+            build_number,
+            result,
+            len(console_log),
         )
-        print(
-            f"Build           : #{build_number}"
-        )
-        print(
-            f"Build Result    : {result}"
-        )
-        print(
-            f"Console URL     : {console_url}"
-        )
-        print(
-            f"Console Length  : {len(console_log)} characters"
-        )
-        print("=" * 72)
-
-        # =========================================================
-        # 4. SHOW THE END OF THE LOG
-        # =========================================================
-        #
-        # The complete log is still returned.
-        #
-        # We only limit what is printed to the AutoHeal container
-        # stdout so extremely large Jenkins logs do not flood
-        # Docker logs.
-        #
-        # Ollama receives the complete console_log.
-        # =========================================================
-
-        preview_limit = 12000
-
-        if len(console_log) > preview_limit:
-            preview = console_log[-preview_limit:]
-
-            print(
-                "Console Preview  : "
-                "showing final "
-                f"{preview_limit} characters"
-            )
-            print("-" * 72)
-            print(preview)
-            print("-" * 72)
-            print(
-                "The complete console log remains available "
-                "to the AutoHeal processing pipeline."
-            )
-        else:
-            print("Console Preview:")
-            print("-" * 72)
-            print(console_log)
-            print("-" * 72)
-
-        print("=" * 72)
-        print()
 
         return JenkinsBuild(
             number=build_number,
@@ -198,10 +160,7 @@ class JenkinsCollector:
         the raw Jenkins console without fetching build metadata.
         """
 
-        url = (
-            f"{self.base_url}/job/"
-            f"{job_name}/{build_number}/consoleText"
-        )
+        url = f"{self._job_base_url(job_name)}/{build_number}/consoleText"
 
         async with httpx.AsyncClient(
             auth=self.auth,
@@ -233,10 +192,7 @@ class JenkinsCollector:
         Wait for a Jenkins build to finish and return its final result.
         """
 
-        url = (
-            f"{self.base_url}/job/"
-            f"{job_name}/{build_number}/api/json"
-        )
+        url = f"{self._job_base_url(job_name)}/{build_number}/api/json"
 
         elapsed = 0
 
@@ -297,10 +253,7 @@ class JenkinsCollector:
         assigns a build number.
         """
 
-        url = (
-            f"{self.base_url}/job/"
-            f"{job_name}/build"
-        )
+        url = f"{self._job_base_url(job_name)}/build"
 
         async with httpx.AsyncClient(
             auth=self.auth,
@@ -360,3 +313,4 @@ class JenkinsCollector:
             "Timed out waiting for Jenkins "
             "to assign a build number."
         )
+

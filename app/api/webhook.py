@@ -1,3 +1,5 @@
+
+import logging
 import secrets
 
 from fastapi import (
@@ -17,6 +19,7 @@ from app.services.incident_service import (
 
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 incident_service = IncidentService()
@@ -34,11 +37,11 @@ async def _process_failure(
             build_number=build_number,
         )
 
-    except Exception as exc:
-
-        print(
-            "AutoHeal background processing failed "
-            f"for {job_name} #{build_number}: {exc}"
+    except Exception:
+        logger.exception(
+            "AutoHeal background processing failed for job=%s build=%s",
+            job_name,
+            build_number,
         )
 
 
@@ -99,3 +102,4 @@ async def jenkins_webhook(
             "status": event.status,
         },
     )
+
