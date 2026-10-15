@@ -1,3 +1,4 @@
+
 # Python
 __pycache__/
 *.py[cod]
@@ -31,3 +32,8 @@ logs/
 
 # Docker
 docker-compose.override.yml
+# Databases and test reports
+*.db
+coverage.xml
+report.xml
+

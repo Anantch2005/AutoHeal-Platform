@@ -1,3 +1,4 @@
+
 """
 Prompt definitions for the local Ollama diagnostic assistant.
 
@@ -293,7 +294,7 @@ Do NOT return AutoHeal actions such as:
 - RETRY
 - CLEAN_WORKSPACE
 - CLEAN_DEPENDENCY_ENV
-- INVALIDATE_DOCKER_CACHE
+- DOCKER_CACHE_BYPASS
 - DO_NOT_HEAL
 - ESCALATE
 
@@ -363,3 +364,4 @@ Answer these questions through the JSON fields:
 
 Return ONLY the required JSON object.
 """
+
