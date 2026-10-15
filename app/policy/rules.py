@@ -1,3 +1,4 @@
+
 from dataclasses import dataclass
 
 
@@ -29,7 +30,7 @@ POLICY_RULES = {
         action="CONNECTIVITY_CHECK_BACKOFF_AND_RETRY",
         max_attempts=1,
         requires_approval=False,
-        reason="Bounded connectivity checks and backoff are permitted.",
+        reason="One bounded connectivity check/backoff recovery build is permitted per incident.",
     ),
     "WORKSPACE_FAILURE": PolicyRule(
         category="WORKSPACE_FAILURE",
@@ -56,13 +57,10 @@ POLICY_RULES = {
         category="DOCKER_FAILURE",
         risk_level="MEDIUM",
         allowed=True,
-        action="INVALIDATE_DOCKER_CACHE_AND_RETRY",
+        action="DOCKER_CACHE_BYPASS_AND_RETRY",
         max_attempts=1,
         requires_approval=False,
-        reason= (   
-            "One cache-bypassing Docker rebuild is permitted."
-            "Shared builder cache is not deleted."
-        ),
+        reason="One Docker builder-cache cleanup is permitted.",
     ),
     "REGISTRY_FAILURE": PolicyRule(
         category="REGISTRY_FAILURE",
@@ -137,3 +135,4 @@ POLICY_RULES = {
         reason="Unknown failures require human investigation.",
     ),
 }
+

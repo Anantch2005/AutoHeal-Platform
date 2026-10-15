@@ -1,4 +1,5 @@
-from datetime import datetime
+
+from datetime import datetime, timezone
 
 from sqlalchemy import (
     DateTime,
@@ -7,6 +8,7 @@ from sqlalchemy import (
     String,
     Text,
     Boolean,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -16,6 +18,9 @@ from app.database.database import Base
 class IncidentRecord(Base):
 
     __tablename__ = "incidents"
+    __table_args__ = (
+        UniqueConstraint("job_name", "build_number", name="uq_incident_job_build"),
+    )
 
     id: Mapped[int] = mapped_column(
         Integer,
@@ -46,9 +51,17 @@ class IncidentRecord(Base):
         nullable=False,
     )
 
+    # Original Jenkins result (normally FAILURE) is preserved separately
+    # from AutoHeal's terminal lifecycle outcome.
     status: Mapped[str] = mapped_column(
         String(50),
         nullable=False,
+    )
+
+    final_status: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default="PROCESSING",
     )
 
     build_url: Mapped[str | None] = mapped_column(
@@ -110,7 +123,7 @@ class IncidentRecord(Base):
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
-        default=datetime.utcnow,
+        default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
         nullable=False,
     )
 
@@ -185,7 +198,7 @@ class RemediationAttemptRecord(Base):
 
     started_at: Mapped[datetime] = mapped_column(
         DateTime,
-        default=datetime.utcnow,
+        default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
         nullable=False,
     )
 
@@ -228,7 +241,7 @@ class AuditEventRecord(Base):
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
-        default=datetime.utcnow,
+        default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
         nullable=False,
     )
 
@@ -236,3 +249,4 @@ class AuditEventRecord(Base):
         "IncidentRecord",
         back_populates="audit_events",
     )
+

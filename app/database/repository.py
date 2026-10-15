@@ -1,4 +1,6 @@
-from sqlalchemy import select
+
+from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 
 from app.database.database import SessionLocal
 from app.database.models import (
@@ -48,7 +50,7 @@ class IncidentRepository:
         ai_root_cause: str | None = None,
         ai_reasoning: str | None = None,
         ai_confidence: float | None = None,
-    ) -> int:
+    ) -> int | None:
 
         with SessionLocal() as session:
 
@@ -74,10 +76,35 @@ class IncidentRepository:
             )
 
             session.add(record)
-            session.commit()
+            try:
+                session.commit()
+            except IntegrityError:
+                # The pre-check is only an optimization; the database's
+                # unique constraint is the concurrency-safe authority.
+                session.rollback()
+                existing = session.scalar(
+                    select(IncidentRecord).where(
+                        IncidentRecord.job_name == job_name,
+                        IncidentRecord.build_number == build_number,
+                    )
+                )
+                if existing is not None:
+                    return None
+                raise
             session.refresh(record)
-
             return record.id
+
+
+    def update_final_status(self, incident_id: int, final_status: str) -> None:
+        if final_status not in {"PROCESSING", "HEALED", "ESCALATED"}:
+            raise ValueError(f"Unsupported final incident status: {final_status}")
+        with SessionLocal() as session:
+            session.execute(
+                update(IncidentRecord)
+                .where(IncidentRecord.id == incident_id)
+                .values(final_status=final_status)
+            )
+            session.commit()
 
     def create_attempt(
         self,
@@ -144,3 +171,4 @@ class IncidentRepository:
             return len(
                 session.scalars(statement).all()
             )
+

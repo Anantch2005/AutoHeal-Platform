@@ -1,31 +1,21 @@
-from fastapi import (
-    FastAPI,
-    HTTPException,
-)
 
-from opentelemetry.instrumentation.fastapi import (
-    FastAPIInstrumentor,
-)
+import logging
 
+from fastapi import FastAPI, HTTPException
 from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 
-from sqlalchemy.exc import (
-    SQLAlchemyError,
-)
+from app.api.alerts import router as alerts_router
+from app.api.webhook import router as webhook_router
+from app.config import settings
+from app.database.database import create_tables, engine
 
-from app.api.alerts import (
-    router as alerts_router,
-)
+try:
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+except ImportError:  # runtime requirements include the optional instrumentation package
+    FastAPIInstrumentor = None
 
-from app.api.webhook import (
-    router as webhook_router,
-)
-
-from app.database.database import (
-    create_tables,
-    engine,
-)
-
+logger = logging.getLogger(__name__)
 
 create_tables()
 
@@ -61,7 +51,13 @@ async def health():
                 "status": "unhealthy",
                 "service": "autoheal",
                 "database": "disconnected",
-                "observability": "enabled",
+                "observability": (
+                    "enabled"
+                    if settings.otel_enabled and FastAPIInstrumentor is not None
+                    else "partially_enabled"
+                    if settings.otel_enabled
+                    else "disabled"
+                ),
             },
         ) from exc
 
@@ -70,7 +66,13 @@ async def health():
         "status": "healthy",
         "service": "autoheal",
         "database": "connected",
-        "observability": "enabled",
+        "observability": (
+            "enabled"
+            if settings.otel_enabled and FastAPIInstrumentor is not None
+            else "partially_enabled"
+            if settings.otel_enabled
+            else "disabled"
+        ),
     }
 
 
@@ -86,6 +88,11 @@ app.include_router(
 )
 
 
-FastAPIInstrumentor.instrument_app(
-    app
-)
+if FastAPIInstrumentor is not None:
+    FastAPIInstrumentor.instrument_app(app)
+else:
+    logger.warning(
+        "FastAPI OpenTelemetry instrumentation is unavailable; HTTP spans are disabled. "
+        "Install requirements.txt to enable request instrumentation."
+    )
+

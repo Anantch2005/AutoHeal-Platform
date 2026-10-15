@@ -1,7 +1,8 @@
+
 # model.py
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class JenkinsWebhookEvent(BaseModel):
@@ -34,7 +35,7 @@ class FailureClassification(BaseModel):
     ai_root_cause: str | None = None
     ai_reasoning: str | None = None
     ai_confidence: float | None = None
-    ai_evidence: list[str] = []
+    ai_evidence: list[str] = Field(default_factory=list)
 
 class RemediationResult(BaseModel):
     action: str
@@ -58,3 +59,4 @@ class Incident(BaseModel):
     console_log: Optional[str] = None
     classification: Optional[FailureClassification] = None
     remediation: Optional[RemediationResult] = None
+
