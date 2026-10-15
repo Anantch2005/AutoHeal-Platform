@@ -1,3 +1,4 @@
+
 import pytest
 
 from app.remediation.dependency import (
@@ -81,14 +82,14 @@ async def test_docker_plan():
 
     assert (
         result["action"]
-        == "INVALIDATE_DOCKER_CACHE_AND_RETRY"
+        == "DOCKER_CACHE_BYPASS_AND_RETRY"
     )
 
 
     assert result["parameters"] == {
 
         "AUTOHEAL_ACTION":
-            "INVALIDATE_DOCKER_CACHE",
+            "DOCKER_CACHE_BYPASS",
     }
 
 
@@ -115,3 +116,4 @@ async def test_network_plan():
         "AUTOHEAL_ACTION":
             "CONNECTIVITY_CHECK_BACKOFF",
     }
+

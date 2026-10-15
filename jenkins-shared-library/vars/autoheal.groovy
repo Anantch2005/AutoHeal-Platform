@@ -1,4 +1,5 @@
 
+
 import groovy.json.JsonOutput
 
 /**
@@ -79,15 +80,17 @@ private String requiredStageFor(String action) {
         case 'CLEAN_WORKSPACE_AND_RETRY':
         case 'RETRY':
         case 'RETRY_FLAKY_TEST':
-        case 'CONNECTIVITY_CHECK_BACKOFF':
-        case 'CONNECTIVITY_CHECK_BACKOFF_AND_RETRY':
             return 'checkout'
 
         case 'CLEAN_DEPENDENCY_ENV':
         case 'CLEAN_DEPENDENCY_ENV_AND_RETRY':
+        case 'CONNECTIVITY_CHECK_BACKOFF':
+        case 'CONNECTIVITY_CHECK_BACKOFF_AND_RETRY':
             return 'test'
 
-        case 'INVALIDATE_DOCKER_CACHE':
+        case 'DOCKER_CACHE_BYPASS':
+        case 'DOCKER_CACHE_BYPASS_AND_RETRY':
+        case 'INVALIDATE_DOCKER_CACHE': // backward compatibility
         case 'INVALIDATE_DOCKER_CACHE_AND_RETRY':
             return 'docker'
 
@@ -109,8 +112,7 @@ private void applyAutoHealAction(String action) {
 
         case 'CLEAN_WORKSPACE':
         case 'CLEAN_WORKSPACE_AND_RETRY':
-            echo 'AutoHeal: restoring owner permissions where possible, then cleaning the workspace.'
-            makeWorkspaceWritable()
+            echo 'AutoHeal: deleting the current workspace before checkout.'
             deleteDir()
             break
 
@@ -119,7 +121,9 @@ private void applyAutoHealAction(String action) {
             remediateDependencies()
             break
 
-        case 'INVALIDATE_DOCKER_CACHE':
+        case 'DOCKER_CACHE_BYPASS':
+        case 'DOCKER_CACHE_BYPASS_AND_RETRY':
+        case 'INVALIDATE_DOCKER_CACHE': // backward compatibility
         case 'INVALIDATE_DOCKER_CACHE_AND_RETRY':
             remediateDockerCache()
             break
@@ -202,13 +206,13 @@ private void remediateDependencies() {
 }
 
 /**
- * Remove old Docker builder cache only.
- * Does not restart the Docker daemon.
+ * Verify Docker is reachable. The recovery build itself uses --no-cache in
+ * the Calculator Jenkinsfile, avoiding a broad daemon-wide cache prune that
+ * could affect unrelated jobs sharing this Docker host.
  */
-
 private void remediateDockerCache() {
     sh(
-        label: 'AutoHeal Docker daemon preflight',
+        label: 'AutoHeal Docker cache recovery preflight',
         script: '''
             set -eu
 
@@ -221,98 +225,46 @@ private void remediateDockerCache() {
                 echo "Docker daemon unavailable; escalating." >&2
                 exit 31
             }
+
+            echo "Docker daemon is available; Jenkinsfile will run the recovery build with --no-cache."
         '''
     )
 
-    env.AUTOHEAL_DISABLE_BUILD_CACHE = 'true'
-
-    echo 'AutoHeal: cache-bypass flag enabled for the next Docker build.'
+    echo 'AutoHeal: Docker preflight passed; no global cache cleanup was run.'
 }
-
 
 /**
  * Perform bounded outbound connectivity checks.
  * Does not change DNS settings, bypass authentication, or switch registries.
  */
-
 private void remediateNetworkTransient() {
     sh(
         label: 'AutoHeal bounded connectivity check',
         script: '''
             set -eu
 
-            python3 - <<'PY'
-import time
-import urllib.request
+            command -v curl >/dev/null 2>&1 || {
+                echo "curl is unavailable." >&2
+                exit 40
+            }
 
-targets = (
-    "https://github.com/",
-    "https://pypi.org/simple/pytest/",
-)
+            for delay in 2 4 8; do
+                echo "AutoHeal: waiting ${delay}s before connectivity check."
+                sleep "$delay"
 
-delays = (2, 4, 8)
+                if curl \
+                    --fail \
+                    --silent \
+                    --show-error \
+                    --max-time 10 \
+                    https://github.com >/dev/null; then
+                    echo "AutoHeal: outbound HTTPS connectivity is available."
+                    exit 0
+                fi
+            done
 
-for target in targets:
-    last_error = None
-
-    for delay in delays:
-        print(
-            f"AutoHeal: checking {target} "
-            f"after a {delay}s backoff."
-        )
-        time.sleep(delay)
-
-        try:
-            request = urllib.request.Request(
-                target,
-                headers={
-                    "User-Agent": "AutoHeal-Connectivity-Check"
-                },
-            )
-
-            with urllib.request.urlopen(
-                request,
-                timeout=10,
-            ) as response:
-                if 200 <= response.status < 400:
-                    print(
-                        f"AutoHeal: connectivity verified for {target}."
-                    )
-                    break
-
-                raise RuntimeError(
-                    f"Unexpected HTTP status: {response.status}"
-                )
-
-        except Exception as exc:
-            last_error = exc
-            print(
-                f"AutoHeal: connectivity check failed: {exc}"
-            )
-    else:
-        print(
-            f"AutoHeal: connectivity remains unavailable for "
-            f"{target}: {last_error}",
-            flush=True,
-        )
-        raise SystemExit(41)
-
-print("AutoHeal: required connectivity checks passed.")
-PY
-        '''
-    )
-}
-
-
-private void makeWorkspaceWritable() {
-    sh(
-        label: 'AutoHeal workspace permission recovery',
-        script: '''
-            set -eu
-
-            # Only changes owner permissions in this job's workspace.
-            # It does not change ownership or operate outside the workspace.
-            chmod -R u+rwX . 2>/dev/null || true
+            echo "AutoHeal: connectivity remains unavailable after bounded checks." >&2
+            exit 41
         '''
     )
 }
@@ -397,3 +349,4 @@ private void sendFailureWebhook(Map config = [:]) {
         }
     }
 }
+

@@ -1,3 +1,4 @@
+
 global:
   resolve_timeout: 1m
 
@@ -21,9 +22,9 @@ receivers:
       - url: "http://autoheal:8000/alerts/alertmanager"
 
         http_config:
-          http_headers:
-            X-AutoHeal-Secret:
-              secrets:
-                - "change-me-alertmanager"
+          authorization:
+            type: Bearer
+            credentials: "__ALERTMANAGER_SECRET__"
 
         send_resolved: true
+

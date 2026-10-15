@@ -1,10 +1,14 @@
+
 import asyncio
+import logging
 
 from app.remediation.dependency import DependencyRemediator
 from app.remediation.docker import DockerRemediator
 from app.remediation.jenkins import JenkinsRemediator
 from app.remediation.network import NetworkRemediator
 from app.remediation.workspace import WorkspaceRemediator
+
+logger = logging.getLogger(__name__)
 
 
 class RemediationExecutor:
@@ -119,8 +123,10 @@ class RemediationExecutor:
 
         if (
             category == "DOCKER_FAILURE"
-            and action
-            == "INVALIDATE_DOCKER_CACHE_AND_RETRY"
+            and action in {
+                "DOCKER_CACHE_BYPASS_AND_RETRY",
+                "INVALIDATE_DOCKER_CACHE_AND_RETRY",  # backward compatibility
+            }
         ):
 
             plan = await (
@@ -133,8 +139,7 @@ class RemediationExecutor:
                 job_name,
                 plan,
                 reason=(
-                    "Docker cache invalidation "
-                    "and clean rebuild"
+                    "Docker cache-bypass rebuild"
                 ),
             )
 
@@ -239,10 +244,7 @@ class RemediationExecutor:
 
         if backoff_seconds > 0:
 
-            print(
-                "Applying remediation backoff: "
-                f"{backoff_seconds} seconds"
-            )
+            logger.info("Applying remediation backoff: %s seconds", backoff_seconds)
 
             await asyncio.sleep(
                 backoff_seconds
@@ -377,3 +379,4 @@ class RemediationExecutor:
             ),
             "queue_url": queue_url,
         }
+

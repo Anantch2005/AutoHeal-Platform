@@ -1,3 +1,4 @@
+
 import json
 
 import pytest
@@ -501,3 +502,11 @@ ERROR: No matching distribution found
     assert (
         result.recommendations
     )
+
+def test_ai_classifier_reads_enabled_setting(monkeypatch):
+    monkeypatch.setattr("app.ai.classifier.settings.ai_enabled", True)
+    monkeypatch.setattr("app.ai.classifier.settings.ollama_url", "http://ollama-test:11434/")
+    classifier = AIClassifier()
+    assert classifier.enabled is True
+    assert classifier.ollama_url == "http://ollama-test:11434"
+

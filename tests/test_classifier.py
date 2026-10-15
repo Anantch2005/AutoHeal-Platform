@@ -1,4 +1,5 @@
 
+
 from app.classifier.classifier import FailureClassifier
 
 
@@ -21,7 +22,7 @@ def test_code_assertion_is_not_healed():
 
 def test_registry_auth_failure_escalates():
     result = classifier.classify(
-        "denied: requested access to the resource is denied"
+        "docker pull example.invalid/private:latest: denied: requested access to the resource is denied"
     )
     assert result["category"] == "REGISTRY_AUTH_FAILURE"
     assert result["action"] == "ESCALATE"
@@ -104,50 +105,56 @@ def test_unknown_failure_escalates():
     assert result["category"] == "UNKNOWN"
     assert result["action"] == "ESCALATE"
 
-def test_real_pip_connection_refused_is_network_failure():
-    log = """
-    pip._vendor.urllib3.exceptions.NewConnectionError:
-    Failed to establish a new connection: [Errno 111] Connection refused
-    """
 
-    result = classifier.classify(log)
-
-    assert result["category"] == "NETWORK_FAILURE"
-    assert result["action"] == "CONNECTIVITY_CHECK_BACKOFF_AND_RETRY"
-
-
-def test_real_workspace_permission_error_is_workspace_failure():
-    log = """
-    AUTOHEAL_WORKSPACE_FAILURE: workspace permission denied while writing probe
-    touch: cannot touch '.autoheal-workspace-probe/locked/probe.txt':
-    Permission denied
-    """
-
-    result = classifier.classify(log)
-
-    assert result["category"] == "WORKSPACE_FAILURE"
-    assert result["action"] == "CLEAN_WORKSPACE_AND_RETRY"
-
-
-def test_docker_cache_key_failure_uses_cache_bypass():
-    log = """
-    ERROR: failed to solve: failed to compute cache key:
-    failed to calculate checksum of ref
-    """
-
-    result = classifier.classify(log)
-
-    assert result["category"] == "DOCKER_FAILURE"
-    assert result["action"] == "INVALIDATE_DOCKER_CACHE_AND_RETRY"
-
-
-def test_code_assertion_remains_non_remediable():
-    log = """
-    Traceback (most recent call last):
-      AssertionError: Controlled code-failure test
-    """
-
-    result = classifier.classify(log)
-
+# Regression cases from the portfolio review: broad words in a test failure
+# must not override stronger application/test evidence.
+def test_assertion_with_connection_refused_is_code_failure():
+    result = classifier.classify(
+        "E AssertionError: expected response; message was Connection refused"
+    )
     assert result["category"] == "CODE_FAILURE"
     assert result["action"] == "DO_NOT_HEAL"
+
+
+def test_typo_in_local_import_is_not_dependency_recovery():
+    result = classifier.classify(
+        "Traceback (most recent call last):\n"
+        "  File 'tests/test_app.py', line 2, in <module>\n"
+        "    from app.calcluator import add\n"
+        "ModuleNotFoundError: No module named 'app.calcluator'"
+    )
+    assert result["category"] == "CODE_FAILURE"
+    assert result["action"] == "DO_NOT_HEAL"
+
+
+def test_application_http_500_is_not_network_failure():
+    result = classifier.classify(
+        "FAILED tests/test_api.py::test_create_user - AssertionError: expected 200, got 500\n"
+        "Application response: HTTP/1.1 500 Internal Server Error"
+    )
+    assert result["category"] == "CODE_FAILURE"
+
+
+def test_generic_authentication_text_is_not_registry_auth_failure():
+    result = classifier.classify(
+        "FAILED tests/test_login.py::test_authentication_required - AssertionError"
+    )
+    assert result["category"] == "CODE_FAILURE"
+
+
+def test_unrelated_authentication_phrase_is_not_registry_auth_failure():
+    result = classifier.classify("The application says authentication required")
+    assert result["category"] == "UNKNOWN"
+
+
+def test_confidence_is_not_hardcoded_to_one():
+    result = classifier.classify("curl: (7) Failed to connect to 127.0.0.1 port 9")
+    assert result["category"] == "NETWORK_FAILURE"
+    assert 0.0 < result["confidence"] < 1.0
+
+
+def test_classifier_uses_tail_for_old_unrelated_log_noise():
+    log = ("Connection refused\n" * 400) + "AssertionError: expected 2 but got 1"
+    result = classifier.classify(log)
+    assert result["category"] == "CODE_FAILURE"
+

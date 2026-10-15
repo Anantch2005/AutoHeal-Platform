@@ -1,3 +1,4 @@
+
 @Library('AutoHeal') _
 
 /*
@@ -48,7 +49,7 @@ pipeline {
 
                 script {
 
-                    autoheal()
+                    autoheal(stage: 'checkout')
 
                     checkout scm
                 }
@@ -79,3 +80,4 @@ pipeline {
         }
     }
 }
+
