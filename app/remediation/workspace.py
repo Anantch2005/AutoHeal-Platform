@@ -2,7 +2,7 @@ class WorkspaceRemediator:
     """
     Build a Jenkins-side workspace recovery plan.
 
-    AutoHeal does not manipulate the Jenkins agent remotely.
+    BuildSentry does not manipulate the Jenkins agent remotely.
     The shared library consumes AUTOHEAL_ACTION and performs the
     workspace cleanup immediately before the normal checkout.
     """

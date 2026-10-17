@@ -54,7 +54,7 @@ class IncidentResultReporter:
         database_incident_id: int,
     ) -> None:
         """
-        Log and persist a complete AutoHeal result summary.
+        Log and persist a complete BuildSentry result summary.
         """
         final_result = (
             "HEALED"
@@ -75,7 +75,7 @@ class IncidentResultReporter:
 
         self._log_lines()
         self._log_lines("=" * 72)
-        self._log_lines("AUTOHEAL RESULT SUMMARY")
+        self._log_lines("BUILDSENTRY RESULT SUMMARY")
         self._log_lines("=" * 72)
 
         self._log_lines(
@@ -153,7 +153,7 @@ class IncidentResultReporter:
 
             self._log_lines(
                 f"AI Category       : "
-                f"{'diagnostic-only (not an internal AutoHeal category)'}"
+                f"{'diagnostic-only (not an internal BuildSentry category)'}"
             )
 
             self._log_lines(
@@ -216,4 +216,3 @@ class IncidentResultReporter:
                 f"{classification.ai_root_cause or ''}"
             ),
         )
-

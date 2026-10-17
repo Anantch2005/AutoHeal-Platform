@@ -84,4 +84,3 @@ def create_tables() -> None:
             )
     except Exception:
         logger.exception("Could not backfill historical incident final_status values")
-

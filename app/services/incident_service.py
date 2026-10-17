@@ -91,7 +91,7 @@ class IncidentService:
         # =========================================
 
         with tracer.start_as_current_span(
-            "autoheal.collect_evidence"
+            "buildsentry.collect_evidence"
         ) as span:
 
             span.set_attribute(
@@ -128,7 +128,7 @@ class IncidentService:
         # =========================================
 
         with tracer.start_as_current_span(
-            "autoheal.classification.rules"
+            "buildsentry.classification.rules"
         ) as span:
 
             classification_data = (
@@ -189,7 +189,7 @@ class IncidentService:
             self._log_lines("-" * 60)
 
             with tracer.start_as_current_span(
-                "autoheal.ai_diagnosis"
+                "buildsentry.ai_diagnosis"
             ) as span:
 
                 try:
@@ -350,7 +350,7 @@ class IncidentService:
                     )
 
                     # AI failure must NEVER change the
-                    # deterministic AutoHeal decision.
+                    # deterministic BuildSentry decision.
 
                     classification = (
                         classification.model_copy(
@@ -386,7 +386,7 @@ class IncidentService:
         # =========================================
 
         with tracer.start_as_current_span(
-            "autoheal.persist_incident"
+            "buildsentry.persist_incident"
         ):
             database_incident_id = (
                 self.repository.create_incident(
@@ -536,7 +536,7 @@ class IncidentService:
         # =========================================
 
         with tracer.start_as_current_span(
-            "autoheal.policy.evaluate"
+            "buildsentry.policy.evaluate"
         ) as span:
 
             policy = self.policy.evaluate(
@@ -744,7 +744,7 @@ class IncidentService:
         # =========================================
 
         with tracer.start_as_current_span(
-            "autoheal.safety.circuit_breaker"
+            "buildsentry.safety.circuit_breaker"
         ) as span:
 
             allowed = (
@@ -1020,7 +1020,7 @@ class IncidentService:
         )
 
         with tracer.start_as_current_span(
-            "autoheal.remediation"
+            "buildsentry.remediation"
         ) as span:
 
             span.set_attribute(
@@ -1217,7 +1217,7 @@ class IncidentService:
             )
 
         # =========================================
-        # 18. AUTOHEAL RESULT SUMMARY
+        # 18. BUILDSENTRY RESULT SUMMARY
         # =========================================
 
         self.reporter.record_result_summary(
@@ -1276,12 +1276,12 @@ class IncidentService:
         )
 
         with tracer.start_as_current_span(
-            "autoheal.process_failure"
+            "buildsentry.process_failure"
         ) as root_span:
 
             root_span.set_attribute(
                 "service.name",
-                "autoheal",
+                "buildsentry",
             )
 
             root_span.set_attribute(
@@ -1299,7 +1299,7 @@ class IncidentService:
             # =========================================
 
             with tracer.start_as_current_span(
-                "autoheal.duplicate_check"
+                "buildsentry.duplicate_check"
             ):
                 if self.repository.exists(
                     job_name,
@@ -1337,14 +1337,19 @@ class IncidentService:
 
             incident = Incident(
                 incident_id=(
-                    f"AH-{uuid.uuid4().hex[:8].upper()}"
+                    f"BS-{uuid.uuid4().hex[:8].upper()}"
                 ),
                 source="jenkins",
                 job_name=job_name,
                 build_number=build_number,
                 status=build.result or "UNKNOWN",
                 build_url=build.url,
-                console_log=log,
+                # Store a bounded, redacted evidence excerpt instead of the full raw
+                # Jenkins console, which may contain credentials or internal details.
+                console_log=self.ai_classifier._prepare_log(
+                    log,
+                    rules_category=classification.category,
+                ),
                 classification=classification,
             )
 
@@ -1383,5 +1388,3 @@ class IncidentService:
                 classification=classification,
                 database_incident_id=database_incident_id,
             )
-
-

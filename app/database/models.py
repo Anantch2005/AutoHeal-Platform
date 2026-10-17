@@ -52,7 +52,7 @@ class IncidentRecord(Base):
     )
 
     # Original Jenkins result (normally FAILURE) is preserved separately
-    # from AutoHeal's terminal lifecycle outcome.
+    # from BuildSentry's terminal lifecycle outcome.
     status: Mapped[str] = mapped_column(
         String(50),
         nullable=False,
@@ -249,4 +249,3 @@ class AuditEventRecord(Base):
         "IncidentRecord",
         back_populates="audit_events",
     )
-
