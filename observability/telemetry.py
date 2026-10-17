@@ -1,3 +1,10 @@
+"""
+Legacy, unused telemetry implementation retained for migration reference.
+
+The running application imports `app.observability.telemetry`; do not add new
+metrics or instrumentation here. This duplicate module is not loaded by the app.
+"""
+
 
 import logging
 
@@ -21,7 +28,7 @@ from opentelemetry.sdk.trace.export import (
 from app.config import settings
 
 
-SERVICE_NAME = "autoheal"
+SERVICE_NAME = "buildsentry"
 SERVICE_VERSION = "0.8.0"
 
 
@@ -59,7 +66,7 @@ else:
 trace.set_tracer_provider(trace_provider)
 
 tracer = trace.get_tracer(
-    "autoheal",
+    "buildsentry",
     SERVICE_VERSION,
 )
 
@@ -91,7 +98,7 @@ meter_provider = MeterProvider(
 metrics.set_meter_provider(meter_provider)
 
 meter = metrics.get_meter(
-    "autoheal",
+    "buildsentry",
     SERVICE_VERSION,
 )
 
@@ -101,53 +108,52 @@ meter = metrics.get_meter(
 # =========================================================
 
 incidents_total = meter.create_counter(
-    "autoheal_incidents_total",
+    "buildsentry_incidents_total",
     description="Total Jenkins incidents received.",
 )
 
 ai_classifications_total = meter.create_counter(
-    "autoheal_ai_classifications_total",
+    "buildsentry_ai_classifications_total",
     description="Total incidents classified by local AI.",
 )
 
 policy_decisions_total = meter.create_counter(
-    "autoheal_policy_decisions_total",
+    "buildsentry_policy_decisions_total",
     description="Total policy decisions.",
 )
 
 policy_denials_total = meter.create_counter(
-    "autoheal_policy_denials_total",
+    "buildsentry_policy_denials_total",
     description="Total policy denials.",
 )
 
 remediation_attempts_total = meter.create_counter(
-    "autoheal_remediation_attempts_total",
+    "buildsentry_remediation_attempts_total",
     description="Total remediation attempts.",
 )
 
 remediation_success_total = meter.create_counter(
-    "autoheal_remediation_success_total",
+    "buildsentry_remediation_success_total",
     description="Successful remediation attempts.",
 )
 
 remediation_failure_total = meter.create_counter(
-    "autoheal_remediation_failure_total",
+    "buildsentry_remediation_failure_total",
     description="Failed remediation attempts.",
 )
 
 healed_total = meter.create_counter(
-    "autoheal_healed_total",
+    "buildsentry_healed_total",
     description="Total successfully healed incidents.",
 )
 
 escalated_total = meter.create_counter(
-    "autoheal_escalated_total",
+    "buildsentry_escalated_total",
     description="Total escalated incidents.",
 )
 
 processing_duration = meter.create_histogram(
-    "autoheal_processing_duration_seconds",
+    "buildsentry_processing_duration_seconds",
     description="Time spent processing incidents.",
     unit="s",
 )
-

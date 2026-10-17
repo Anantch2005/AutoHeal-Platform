@@ -63,7 +63,7 @@ def test_webhook_to_verified_recovery_with_mocked_jenkins(monkeypatch):
 
     response = TestClient(app).post(
         "/webhook/jenkins",
-        headers={"X-AutoHeal-Secret": "change-me"},
+        headers={"X-BuildSentry-Secret": "change-me"},
         json={"job_name": "folder/prac", "build_number": 17, "status": "FAILURE"},
     )
 
@@ -98,7 +98,7 @@ def test_code_failure_is_escalated_without_remediation(monkeypatch):
 
     response = TestClient(app).post(
         "/webhook/jenkins",
-        headers={"X-AutoHeal-Secret": "change-me"},
+        headers={"X-BuildSentry-Secret": "change-me"},
         json={"job_name": "folder/prac", "build_number": 18, "status": "FAILURE"},
     )
 
@@ -106,4 +106,3 @@ def test_code_failure_is_escalated_without_remediation(monkeypatch):
     service.remediation.execute.assert_not_awaited()
     assert repository.final_status == "ESCALATED"
     assert any(event["event_type"] == "POLICY_DENIED" for event in repository.events)
-

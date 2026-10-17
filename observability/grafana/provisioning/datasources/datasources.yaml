@@ -17,8 +17,8 @@ datasources:
     url: http://tempo:3200
     editable: true
 
-  - name: AutoHeal PostgreSQL
-    uid: autoheal-postgres
+  - name: BuildSentry PostgreSQL
+    uid: buildsentry-postgres
     type: postgres
     access: proxy
     url: $__env{PG_HOST}:$__env{PG_PORT}

@@ -58,7 +58,7 @@ def test_webhook_failure_endpoint(monkeypatch):
     response = client.post(
         "/webhook/jenkins",
         headers={
-            "X-AutoHeal-Secret": "change-me",
+            "X-BuildSentry-Secret": "change-me",
         },
         json={
             "job_name": "prac",
@@ -93,7 +93,7 @@ def test_webhook_rejects_invalid_secret():
     response = client.post(
         "/webhook/jenkins",
         headers={
-            "X-AutoHeal-Secret": "wrong-secret",
+            "X-BuildSentry-Secret": "wrong-secret",
         },
         json={
             "job_name": "prac",
@@ -114,7 +114,7 @@ def test_webhook_ignores_non_failure_build():
     response = client.post(
         "/webhook/jenkins",
         headers={
-            "X-AutoHeal-Secret": "change-me",
+            "X-BuildSentry-Secret": "change-me",
         },
         json={
             "job_name": "prac",
@@ -133,3 +133,12 @@ def test_webhook_ignores_non_failure_build():
         "Build is not a failure. "
         "No incident created."
     )
+
+def test_legacy_autoheal_header_remains_accepted(monkeypatch):
+    # Existing Calculator Jenkins jobs can migrate independently.
+    response = client.post(
+        "/webhook/jenkins",
+        headers={"X-AutoHeal-Secret": "change-me"},
+        json={"job_name": "prac", "build_number": 999, "status": "SUCCESS"},
+    )
+    assert response.status_code == 200

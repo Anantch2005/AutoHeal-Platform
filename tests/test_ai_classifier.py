@@ -147,11 +147,11 @@ def test_ai_extracts_failed_stage():
 
     log = """
 [Pipeline] Start of Pipeline
-[Pipeline] { (Checkout)
+10:49:30 [Pipeline] { (Checkout)
 [Pipeline] sh
 Checking out repository
 [Pipeline] }
-[Pipeline] { (Test)
+10:49:33 [Pipeline] { (Test)
 [Pipeline] sh
 pytest -q
 ============================= test session starts =============================
@@ -160,7 +160,7 @@ E       assert -1 == 5
 AssertionError
 script returned exit code 1
 [Pipeline] }
-[Pipeline] { (Docker Build)
+10:50:02 [Pipeline] { (Docker Build)
 docker build .
 [Pipeline] }
 [Pipeline] End of Pipeline
@@ -338,7 +338,7 @@ async def test_ai_classification_parses_real_ollama_response(
     )
 
     log = """
-[Pipeline] { (Test)
+10:49:33 [Pipeline] { (Test)
 pytest -q
 FAILED tests/test_calculator.py::test_add
 E       assert -1 == 5
@@ -481,7 +481,7 @@ async def test_ai_accepts_free_form_diagnostic_category(
 
     result = await classifier.classify(
         """
-[Pipeline] { (Test)
+10:49:33 [Pipeline] { (Test)
 pip install -r requirements.txt
 ERROR: No matching distribution found
 [Pipeline] }
@@ -509,4 +509,3 @@ def test_ai_classifier_reads_enabled_setting(monkeypatch):
     classifier = AIClassifier()
     assert classifier.enabled is True
     assert classifier.ollama_url == "http://ollama-test:11434"
-

@@ -39,7 +39,7 @@ def test_alertmanager_sends_slack_notification_when_configured(monkeypatch):
             "status": "firing",
             "alerts": [
                 {
-                    "labels": {"alertname": "AutoHealEscalated", "severity": "critical"},
+                    "labels": {"alertname": "BuildSentryEscalated", "severity": "critical"},
                     "annotations": {"summary": "Incident requires human review"},
                 }
             ],
@@ -51,5 +51,4 @@ def test_alertmanager_sends_slack_notification_when_configured(monkeypatch):
     assert len(FakeAsyncClient.calls) == 1
     url, payload = FakeAsyncClient.calls[0]
     assert url == "https://hooks.slack.test/example"
-    assert "AutoHealEscalated" in payload["json"]["text"]
-
+    assert "BuildSentryEscalated" in payload["json"]["text"]

@@ -3,16 +3,16 @@
 import groovy.json.JsonOutput
 
 /**
- * AutoHeal Jenkins Shared Library.
+ * BuildSentry Jenkins Shared Library.
  *
  * The backend selects an allowlisted action.
  * This library executes that action on the Jenkins agent.
  *
  * Supported hooks:
- *   autoheal(stage: 'checkout')
- *   autoheal(stage: 'test')
- *   autoheal(stage: 'docker')
- *   autoheal(stage: 'registry')
+ *   buildsentry(stage: 'checkout')
+ *   buildsentry(stage: 'test')
+ *   buildsentry(stage: 'docker')
+ *   buildsentry(stage: 'registry')
  *
  * Normal failures are reported from post { failure { ... } }.
  */
@@ -29,10 +29,10 @@ def call(Map config = [:]) {
             try {
                 sendFailureWebhook(config)
             } catch (Exception ex) {
-                echo "AutoHeal: webhook notification failed; preserving original build failure: ${ex.message}"
+                echo "BuildSentry: webhook notification failed; preserving original build failure: ${ex.message}"
             }
         } else {
-            echo 'AutoHeal: no recovery action requested.'
+            echo 'BuildSentry: no recovery action requested.'
         }
         return
     }
@@ -41,7 +41,7 @@ def call(Map config = [:]) {
 
     echo """
 ========================================
-          AutoHeal Recovery
+          BuildSentry Recovery
 ========================================
 Action : ${action}
 Build  : ${env.BUILD_NUMBER}
@@ -52,16 +52,16 @@ Stage  : ${stageName ?: 'unspecified'}
     String requiredStage = requiredStageFor(action)
 
     if (requiredStage == 'unsupported') {
-        error("AutoHeal: unsupported action '${action}'. Refusing execution.")
+        error("BuildSentry: unsupported action '${action}'. Refusing execution.")
     }
 
     if (stageName != requiredStage) {
-        echo "AutoHeal: action '${action}' is waiting for stage '${requiredStage}'."
+        echo "BuildSentry: action '${action}' is waiting for stage '${requiredStage}'."
         return
     }
 
     if ((env.AUTOHEAL_ACTION_APPLIED ?: '') == 'true') {
-        echo 'AutoHeal: action already executed in this build; skipping duplicate hook.'
+        echo 'BuildSentry: action already executed in this build; skipping duplicate hook.'
         return
     }
 
@@ -69,9 +69,9 @@ Stage  : ${stageName ?: 'unspecified'}
     // not be accidentally executed again by another hook in this build.
     env.AUTOHEAL_ACTION_APPLIED = 'true'
 
-    applyAutoHealAction(action)
+    applyBuildSentryAction(action)
 
-    echo "AutoHeal: action '${action}' completed. The pipeline must now verify recovery."
+    echo "BuildSentry: action '${action}' completed. The pipeline must now verify recovery."
 }
 
 private String requiredStageFor(String action) {
@@ -102,17 +102,17 @@ private String requiredStageFor(String action) {
     }
 }
 
-private void applyAutoHealAction(String action) {
+private void applyBuildSentryAction(String action) {
     switch (action) {
         case 'RETRY':
         case 'RETRY_FLAKY_TEST':
         case 'RETRY_REGISTRY':
-            echo "AutoHeal: approved controlled retry requested (${action})."
+            echo "BuildSentry: approved controlled retry requested (${action})."
             break
 
         case 'CLEAN_WORKSPACE':
         case 'CLEAN_WORKSPACE_AND_RETRY':
-            echo 'AutoHeal: deleting the current workspace before checkout.'
+            echo 'BuildSentry: deleting the current workspace before checkout.'
             deleteDir()
             break
 
@@ -134,7 +134,7 @@ private void applyAutoHealAction(String action) {
             break
 
         default:
-            error("AutoHeal: action '${action}' is not allowlisted.")
+            error("BuildSentry: action '${action}' is not allowlisted.")
     }
 }
 
@@ -144,7 +144,7 @@ private void applyAutoHealAction(String action) {
  */
 private void remediateDependencies() {
     sh(
-        label: 'AutoHeal dependency recovery',
+        label: 'BuildSentry dependency recovery',
         script: '''
             set -eu
 
@@ -202,7 +202,7 @@ private void remediateDependencies() {
         env.PATH = "${pwd()}/.venv/bin:${env.PATH}"
     }
 
-    echo 'AutoHeal: dependency recovery commands completed.'
+    echo 'BuildSentry: dependency recovery commands completed.'
 }
 
 /**
@@ -212,7 +212,7 @@ private void remediateDependencies() {
  */
 private void remediateDockerCache() {
     sh(
-        label: 'AutoHeal Docker cache recovery preflight',
+        label: 'BuildSentry Docker cache recovery preflight',
         script: '''
             set -eu
 
@@ -230,7 +230,7 @@ private void remediateDockerCache() {
         '''
     )
 
-    echo 'AutoHeal: Docker preflight passed; no global cache cleanup was run.'
+    echo 'BuildSentry: Docker preflight passed; no global cache cleanup was run.'
 }
 
 /**
@@ -239,7 +239,7 @@ private void remediateDockerCache() {
  */
 private void remediateNetworkTransient() {
     sh(
-        label: 'AutoHeal bounded connectivity check',
+        label: 'BuildSentry bounded connectivity check',
         script: '''
             set -eu
 
@@ -249,7 +249,7 @@ private void remediateNetworkTransient() {
             }
 
             for delay in 2 4 8; do
-                echo "AutoHeal: waiting ${delay}s before connectivity check."
+                echo "BuildSentry: waiting ${delay}s before connectivity check."
                 sleep "$delay"
 
                 if curl \
@@ -258,12 +258,12 @@ private void remediateNetworkTransient() {
                     --show-error \
                     --max-time 10 \
                     https://github.com >/dev/null; then
-                    echo "AutoHeal: outbound HTTPS connectivity is available."
+                    echo "BuildSentry: outbound HTTPS connectivity is available."
                     exit 0
                 fi
             done
 
-            echo "AutoHeal: connectivity remains unavailable after bounded checks." >&2
+            echo "BuildSentry: connectivity remains unavailable after bounded checks." >&2
             exit 41
         '''
     )
@@ -289,7 +289,7 @@ private void sendFailureWebhook(Map config = [:]) {
     Integer autoHealBuildNumber = currentBuild.number as Integer
 
     if (autoHealBuildNumber == null || autoHealBuildNumber < 1) {
-        echo 'AutoHeal: cannot determine a valid Jenkins build number; skipping webhook.'
+        echo 'BuildSentry: cannot determine a valid Jenkins build number; skipping webhook.'
         return
     }
 
@@ -312,7 +312,7 @@ private void sendFailureWebhook(Map config = [:]) {
             "AUTOHEAL_WEBHOOK_URL=${baseUrl}/webhook/jenkins"
         ]) {
             sh(
-                label: 'Notify AutoHeal backend',
+                label: 'Notify BuildSentry backend',
                 script: '''
                     set -eu
 
@@ -328,16 +328,16 @@ private void sendFailureWebhook(Map config = [:]) {
                         --max-time 15 \
                         --request POST \
                         --header 'Content-Type: application/json' \
-                        --header "X-AutoHeal-Secret: ${AUTOHEAL_WEBHOOK_SECRET}" \
+                        --header "X-BuildSentry-Secret: ${AUTOHEAL_WEBHOOK_SECRET}" \
                         --data "$AUTOHEAL_PAYLOAD" \
                         "$AUTOHEAL_WEBHOOK_URL" || true)
 
                     case "$status_code" in
                         200|202)
-                            echo "AutoHeal webhook accepted."
+                            echo "BuildSentry webhook accepted."
                             ;;
                         *)
-                            echo "AutoHeal webhook returned HTTP status: ${status_code}"
+                            echo "BuildSentry webhook returned HTTP status: ${status_code}"
                             if [ -s "$response_file" ]; then
                                 cat "$response_file"
                             fi
@@ -349,4 +349,3 @@ private void sendFailureWebhook(Map config = [:]) {
         }
     }
 }
-

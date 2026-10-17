@@ -3,10 +3,10 @@ apiVersion: 1
 
 providers:
 
-  - name: AutoHeal
+  - name: BuildSentry
     orgId: 1
 
-    folder: AutoHeal
+    folder: BuildSentry
 
     type: file
 

@@ -1,10 +1,10 @@
 
-@Library('AutoHeal') _
+@Library('BuildSentry') _
 
 /*
- * Minimal AutoHeal integration example.
+ * Minimal BuildSentry integration example.
  *
- * AutoHeal Shared Library contains ONLY autoheal().
+ * BuildSentry Shared Library contains ONLY buildsentry().
  *
  * Generic CI/CD steps belong to the separate Shared library.
  */
@@ -27,14 +27,14 @@ pipeline {
     parameters {
 
         /*
-         * Internal parameter used only when AutoHeal
+         * Internal parameter used only when BuildSentry
          * triggers a retry build.
          */
         string(
             name: 'AUTOHEAL_ACTION',
             defaultValue: '',
             description: (
-                'Internal AutoHeal action. '
+                'Internal BuildSentry action. '
                 + 'Leave empty for normal builds.'
             )
         )
@@ -49,7 +49,7 @@ pipeline {
 
                 script {
 
-                    autoheal(stage: 'checkout')
+                    buildsentry(stage: 'checkout')
 
                     checkout scm
                 }
@@ -75,9 +75,8 @@ pipeline {
 
             script {
 
-                autoheal()
+                buildsentry()
             }
         }
     }
 }
-
