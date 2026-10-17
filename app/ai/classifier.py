@@ -5,7 +5,7 @@ Focused Jenkins failure-context extractor + Ollama diagnostic client.
 Architecture:
 
     full Jenkins console
-        ├── deterministic AutoHeal classifier
+        ├── deterministic BuildSentry classifier
         ├── audit/persistence
         └── focused evidence extractor -> Ollama
 
@@ -438,4 +438,3 @@ class AIClassifier(FailureContextExtractor):
                 confidence,
             ),
         )
-

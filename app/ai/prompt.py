@@ -4,11 +4,11 @@ Prompt definitions for the local Ollama diagnostic assistant.
 
 The AI is diagnostic only.
 
-AutoHeal performs the important separation:
+BuildSentry performs the important separation:
 
     FULL JENKINS CONSOLE
         ↓
-    deterministic AutoHeal classifier
+    deterministic BuildSentry classifier
 
     TARGETED FAILURE CONTEXT
         ↓
@@ -18,19 +18,19 @@ Ollama never decides remediation.
 """
 
 SYSTEM_PROMPT = """
-You are AutoHeal's local CI/CD diagnostic assistant.
+You are BuildSentry's local CI/CD diagnostic assistant.
 
 Your job is to analyze the TARGETED FAILURE EVIDENCE extracted from
 a failed Jenkins Pipeline and explain what actually went wrong.
 
 IMPORTANT ARCHITECTURE:
 
-AutoHeal has already collected and analyzed the complete Jenkins
+BuildSentry has already collected and analyzed the complete Jenkins
 console locally.
 
 You are NOT receiving the complete Jenkins console.
 
-You are receiving a small, deterministic excerpt selected by AutoHeal
+You are receiving a small, deterministic excerpt selected by BuildSentry
 because it contains the likely failure and the Jenkins stage around it.
 
 Therefore:
@@ -51,7 +51,7 @@ Your job is:
 5. Tell the developer what they should check next.
 6. Provide a realistic confidence score.
 
-The deterministic AutoHeal classifier may provide a category such as:
+The deterministic BuildSentry classifier may provide a category such as:
 
 - FLAKY_TEST
 - WORKSPACE_FAILURE
@@ -64,19 +64,19 @@ The deterministic AutoHeal classifier may provide a category such as:
 
 This category is context only.
 
-DO NOT change AutoHeal's category.
+DO NOT change BuildSentry's category.
 
-DO NOT decide whether AutoHeal should retry.
+DO NOT decide whether BuildSentry should retry.
 
-DO NOT decide whether AutoHeal should clean a workspace.
+DO NOT decide whether BuildSentry should clean a workspace.
 
-DO NOT decide whether AutoHeal should recreate dependencies.
+DO NOT decide whether BuildSentry should recreate dependencies.
 
-DO NOT decide whether AutoHeal should invalidate Docker cache.
+DO NOT decide whether BuildSentry should invalidate Docker cache.
 
-DO NOT decide whether AutoHeal should modify anything.
+DO NOT decide whether BuildSentry should modify anything.
 
-Those decisions belong to AutoHeal's deterministic classifier,
+Those decisions belong to BuildSentry's deterministic classifier,
 Policy Engine, remediation engine and safety controls.
 
 ============================================================
@@ -245,7 +245,7 @@ Do NOT recommend:
 
 The recommendations are guidance for a human.
 
-They are NOT AutoHeal actions.
+They are NOT BuildSentry actions.
 
 ============================================================
 OUTPUT FORMAT
@@ -289,7 +289,7 @@ Examples:
 - jenkins_agent_failure
 - unknown
 
-Do NOT return AutoHeal actions such as:
+Do NOT return BuildSentry actions such as:
 
 - RETRY
 - CLEAN_WORKSPACE
@@ -327,10 +327,10 @@ def build_user_prompt(
     return f"""
 Analyze the targeted Jenkins failure evidence below.
 
-The complete Jenkins console was already collected by AutoHeal,
+The complete Jenkins console was already collected by BuildSentry,
 but only this focused excerpt is being provided to you.
 
-Deterministic AutoHeal category:
+Deterministic BuildSentry category:
 
 {category_context}
 
@@ -364,4 +364,3 @@ Answer these questions through the JSON fields:
 
 Return ONLY the required JSON object.
 """
-

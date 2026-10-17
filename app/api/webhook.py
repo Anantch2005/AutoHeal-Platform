@@ -39,7 +39,7 @@ async def _process_failure(
 
     except Exception:
         logger.exception(
-            "AutoHeal background processing failed for job=%s build=%s",
+            "BuildSentry background processing failed for job=%s build=%s",
             job_name,
             build_number,
         )
@@ -49,15 +49,11 @@ async def _process_failure(
 async def jenkins_webhook(
     event: JenkinsWebhookEvent,
     background_tasks: BackgroundTasks,
-    x_autoheal_secret: str | None = Header(
-        default=None
-    ),
+    x_buildsentry_secret: str | None = Header(default=None),
+    x_autoheal_secret: str | None = Header(default=None),
 ):
-
-    provided_secret = (
-        x_autoheal_secret or ""
-    )
-
+    # Accept the legacy header while existing Jenkins jobs migrate to BuildSentry.
+    provided_secret = x_buildsentry_secret or x_autoheal_secret or ""
 
     if not secrets.compare_digest(
         provided_secret,
@@ -102,4 +98,3 @@ async def jenkins_webhook(
             "status": event.status,
         },
     )
-

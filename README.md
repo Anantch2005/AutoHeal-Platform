@@ -1,7 +1,7 @@
 
-# AutoHeal — Policy-Gated Jenkins Recovery Prototype
+# BuildSentry — Policy-Gated Jenkins Recovery Prototype
 
-AutoHeal is a portfolio prototype for analyzing failed Jenkins builds and attempting a narrowly allowlisted recovery. It is **not a production-ready autonomous repair system**.
+BuildSentry is a portfolio prototype for analyzing failed Jenkins builds and attempting a narrowly allowlisted recovery. It is **not a production-ready autonomous repair system**.
 
 ## Design
 
@@ -49,7 +49,7 @@ The policy permits at most one recovery build per incident. A separate in-memory
 
 - Docker Engine and Docker Compose v2
 - Python 3.12 for local tests
-- A Jenkins controller reachable from the AutoHeal container
+- A Jenkins controller reachable from the BuildSentry container
 - Jenkins API user/token with permission to read build/console data and trigger a build
 - A Jenkins secret credential named `autoheal-webhook-secret` matching `WEBHOOK_SECRET`
 - A local Ollama model only if AI diagnostics are desired
@@ -68,8 +68,8 @@ The policy permits at most one recovery build per incident. A separate in-memory
 5. Pull the model into the Ollama container (the model is **not** automatically downloaded by Compose):
 
    ```bash
-   docker exec autoheal-ollama ollama pull llama3.2:3b
-   docker exec autoheal-ollama ollama list
+   docker exec buildsentry-ollama ollama pull llama3.2:3b
+   docker exec buildsentry-ollama ollama list
    ```
 
 6. Check service health and dashboards:
@@ -91,23 +91,22 @@ The GPU override is optional and is expected to fail on hosts without a working 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-python -m pip install -r requirements-dev.txt
+python -m pip install -r requirements.txt
 python -m compileall -q app tests
-ruff check app tests
-pytest -q --cov=app --cov-report=term-missing
+pytest -q
 ```
 
 The tests use an isolated SQLite database and mock external Jenkins/Ollama interactions. They do not prove a live Jenkins controller, Docker daemon, registry, SonarQube server, or Slack webhook works end to end.
 
 ## Jenkins integration
 
-The AutoHeal Jenkins Shared Library lives in `jenkins-shared-library/vars/autoheal.groovy`. Configure this repository as the Jenkins global library named `AutoHeal`. The Calculator demo also references the separate generic library named `Shared`, from:
+The BuildSentry Jenkins Shared Library lives in `jenkins-shared-library/vars/buildsentry.groovy`. Configure this repository as the Jenkins global library named `BuildSentry`. New pipelines call `buildsentry()`; the `autoheal()` alias and `X-AutoHeal-Secret` header remain supported temporarily for existing jobs. The webhook also accepts `X-BuildSentry-Secret`. The Calculator demo also references the separate generic library named `Shared`, from:
 
 - <https://github.com/Anantch2005/jenkins-shared-library>
 
-That generic library is an external dependency and is not vendored into this repository. Its `docker_build` implementation currently performs a normal cached build and does not expose a cache-bypass option. To keep the library unchanged, the Calculator Jenkinsfile explicitly runs `docker build --no-cache` when the approved AutoHeal Docker recovery action is present. The `trivy_scan` implementation accepts an `exitCode` argument, which the pipeline sets to `1` for the CRITICAL/HIGH gate. The CI job in this repository does not execute those external Jenkins steps, so the live Jenkins path still needs a manual integration run.
+That generic library is an external dependency and is not vendored into this repository. Its `docker_build` implementation currently performs a normal cached build and does not expose a cache-bypass option. To keep the library unchanged, the Calculator Jenkinsfile explicitly runs `docker build --no-cache` when the approved BuildSentry Docker recovery action is present. The `trivy_scan` implementation accepts an `exitCode` argument, which the pipeline sets to `1` for the CRITICAL/HIGH gate. The CI job in this repository does not execute those external Jenkins steps, so the live Jenkins path still needs a manual integration run.
 
-The minimal example is `jenkins/AutoHealRemediation.example.groovy`. Recovery actions must call `autoheal(stage: 'checkout')`, `autoheal(stage: 'test')`, `autoheal(stage: 'docker')`, or `autoheal(stage: 'registry')` at the matching stage; calling `autoheal()` without a stage cannot apply a stage-bound action.
+The minimal example is `jenkins/BuildSentryRemediation.example.groovy`. Recovery actions must call `buildsentry(stage: 'checkout')`, `buildsentry(stage: 'test')`, `buildsentry(stage: 'docker')`, or `buildsentry(stage: 'registry')` at the matching stage; calling `buildsentry()` without a stage cannot apply a stage-bound action.
 
 ## Failure injection demo
 
@@ -118,16 +117,16 @@ The Calculator repository is a deliberately small demo target, not a production 
 
 The Jenkinsfile records a one-shot demo marker after the approved recovery action. The marker prevents the demo fault from being re-injected on the recovery build; the environment repair itself is still required for the build to pass. A fresh manual build clears these demo markers. `FLAKY_TEST` is a one-shot synthetic failure injected by the pipeline, not a claim that statistical flakiness has been detected. `CODE_FAILURE` is intentionally denied and should not trigger a recovery build. `UNKNOWN_FAILURE` should escalate.
 
-Run each scenario separately and retain the failed build, recovery build, AutoHeal incident, and Grafana result as evidence. Do not claim successful recovery until the recovery build is verified `SUCCESS`.
+Run each scenario separately and retain the failed build, recovery build, BuildSentry incident, and Grafana result as evidence. Do not claim successful recovery until the recovery build is verified `SUCCESS`.
 
 ## Human alerts
 
-Alertmanager authenticates to the API using a Bearer token rendered from `ALERTMANAGER_SECRET` in `.env`. The token is rendered at container startup; use an alphanumeric/hex token so shell substitution is safe. `SLACK_WEBHOOK_URL` is optional. If it is blank, AutoHeal logs alerts but does **not** deliver an external notification. Configure a Slack Incoming Webhook URL in `.env` to enable human notifications.
+Alertmanager authenticates to the API using a Bearer token rendered from `ALERTMANAGER_SECRET` in `.env`. The token is rendered at container startup; use an alphanumeric/hex token so shell substitution is safe. `SLACK_WEBHOOK_URL` is optional. If it is blank, BuildSentry logs alerts but does **not** deliver an external notification. Configure a Slack Incoming Webhook URL in `.env` to enable human notifications.
 
 ## Security notes
 
 - Never commit `.env`, Jenkins tokens, database passwords, or Slack webhook URLs.
-- The AutoHeal API and observability ports bind to `127.0.0.1` by default. Do not expose them publicly without adding an authenticated reverse proxy and appropriate network controls.
+- The BuildSentry API and observability ports bind to `127.0.0.1` by default. Do not expose them publicly without adding an authenticated reverse proxy and appropriate network controls.
 - Grafana credentials must be changed from the example values before use.
 - The Calculator demo uses a Docker socket mount in its build agent; access to `docker.sock` is effectively privileged host access. Use a disposable agent, not a shared production controller.
 - Trivy is configured to gate on `CRITICAL,HIGH` vulnerabilities in the demo pipeline. Scanner/database findings can change over time and must be reviewed rather than suppressed to force a green build.
@@ -149,4 +148,3 @@ GitHub Actions runs Ruff, pytest with coverage, and a runtime Docker image build
 ## License
 
 MIT. See `LICENSE`.
-

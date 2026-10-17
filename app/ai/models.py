@@ -9,7 +9,7 @@ class AIClassification(BaseModel):
     This model is diagnostic only.
 
     The AI does NOT control:
-        - AutoHeal failure classification
+        - BuildSentry failure classification
         - policy decisions
         - remediation actions
         - Jenkins retries

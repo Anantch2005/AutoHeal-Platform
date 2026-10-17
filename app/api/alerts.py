@@ -49,7 +49,7 @@ async def alertmanager_webhook(
                 f"{annotations.get('summary', 'No summary supplied')}"
             )
         message = (
-            f"AutoHeal Alertmanager status: {status}\n"
+            f"BuildSentry Alertmanager status: {status}\n"
             + ("\n".join(summaries) if summaries else "No alert details supplied.")
         )
         try:
@@ -75,4 +75,3 @@ async def alertmanager_webhook(
         "alerts_received": len(alerts),
         "human_notification": notification_status,
     }
-

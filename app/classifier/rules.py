@@ -17,7 +17,7 @@ FAILURE_RULES = (
     FailureRule(
         category="FLAKY_TEST",
         action="RETRY",
-        reason="An explicit AutoHeal flaky-test marker was detected.",
+        reason="An explicit BuildSentry flaky-test marker was detected.",
         patterns=(r"AUTOHEAL_FLAKY_TEST", r"AUTOHEAL_TEST_FAILURE.*FLAKY_TEST"),
         confidence=0.99,
     ),
@@ -143,4 +143,3 @@ FAILURE_RULES = (
         confidence=0.90,
     ),
 )
-

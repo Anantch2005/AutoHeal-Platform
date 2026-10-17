@@ -278,7 +278,7 @@ class FailureContextExtractor:
     }
 
     STAGE_PATTERN = re.compile(
-        r"^\s*\[Pipeline\]\s+\{\s+\((?P<stage>.+?)\)\s*$"
+        r"^\s*(?:\d{2}:\d{2}:\d{2}(?:\.\d+)?\s+)?\[Pipeline\]\s+\{\s+\((?P<stage>.+?)\)\s*$"
     )
 
     def _prepare_log(
@@ -435,7 +435,7 @@ class FailureContextExtractor:
             "",
             (
                 "The complete Jenkins console was "
-                "analyzed locally by AutoHeal."
+                "analyzed locally by BuildSentry."
             ),
             (
                 "Only deterministic, failure-focused "
@@ -997,4 +997,3 @@ class FailureContextExtractor:
             " ",
             text or "",
         ).strip()
-
